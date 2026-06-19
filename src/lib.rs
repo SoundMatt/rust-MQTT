@@ -6,7 +6,7 @@
 //! rust-MQTT — Pure-Rust MQTT client library.
 //!
 //! Safety-oriented, broker-agnostic, COVESA/VISSR ready.
-//! Conforms to RELAY spec v1.10 with ASIL-B / SIL 2 safety annotations.
+//! Conforms to RELAY spec v1.11 with ASIL-B / SIL 2 safety annotations.
 //!
 //! # Architecture
 //!
@@ -102,10 +102,10 @@ pub use topic::match_topic;
 
 /// The RELAY specification version this library targets.
 //fusa:req REQ-RELAY-001
-pub const SPEC_VERSION: &str = "1.10";
+pub const SPEC_VERSION: &str = "1.11";
 
 /// Alias for `SPEC_VERSION` for explicitness in CLI contexts.
-pub const RELAY_SPEC_VERSION: &str = "1.10";
+pub const RELAY_SPEC_VERSION: &str = "1.11";
 
 /// Protocol integer for MQTT per RELAY spec §3.
 pub const PROTOCOL_INT: i32 = 4;

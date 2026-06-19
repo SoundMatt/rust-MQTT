@@ -2,7 +2,7 @@
 
 Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready.
 
-**RELAY spec v1.10 conformant** · ASIL-B / SIL 2 · ISO 26262 · IEC 61508 · ISO 21434
+**RELAY spec v1.11 conformant** · ASIL-B / SIL 2 · ISO 26262 · IEC 61508 · ISO 21434
 
 [![CI](https://github.com/SoundMatt/rust-MQTT/actions/workflows/ci.yml/badge.svg)](https://github.com/SoundMatt/rust-MQTT/actions/workflows/ci.yml)
 

@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased] — RELAY v1.11 conformance
+
+### Changed
+
+- `SPEC_VERSION` and `RELAY_SPEC_VERSION` bumped to `"1.11"`
+- CI relay CLI pin updated to `relay@v1.11.0`
+- §17.7 CLI waiver removed in v1.11: rust-MQTT already ships a full CLI — no change required
+
+---
+
 ## [1.0.0] — 2026-06-19
 
 ### Added

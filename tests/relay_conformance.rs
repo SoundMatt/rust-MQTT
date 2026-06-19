@@ -57,10 +57,10 @@ fn load_vector() -> MqttMessageVector {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn spec_version_is_1_10() {
+fn spec_version_is_1_11() {
     //fusa:req REQ-RELAY-001
-    assert_eq!(rust_mqtt::SPEC_VERSION, "1.10");
-    assert_eq!(rust_mqtt::RELAY_SPEC_VERSION, "1.10");
+    assert_eq!(rust_mqtt::SPEC_VERSION, "1.11");
+    assert_eq!(rust_mqtt::RELAY_SPEC_VERSION, "1.11");
 }
 
 #[test]

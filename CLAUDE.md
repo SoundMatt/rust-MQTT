@@ -7,7 +7,7 @@ Local path: `/Users/matt/Documents/Coding/SoundMatt/rust-MQTT`
 
 A pure-Rust MQTT client library with swappable transport backends.
 Safety-oriented, broker-agnostic, COVESA/VISSR ready.
-Targets **RELAY spec v1.10** with **ASIL-B / SIL 2** safety annotations.
+Targets **RELAY spec v1.11** with **ASIL-B / SIL 2** safety annotations.
 
 | Module | What it is |
 |---|---|
@@ -77,7 +77,7 @@ Requirements are defined in `requirements.json`. Never reuse or renumber IDs.
 
 ## RELAY spec
 
-- `SPEC_VERSION = "1.10"` (always matches `spec/version.json` in SoundMatt/RELAY)
+- `SPEC_VERSION = "1.11"` (always matches `spec/version.json` in SoundMatt/RELAY)
 - Verify with: `relay conform --strict ./target/release/rust-mqtt`
 - Interop: `relay interop --protocol MQTT --impl ./target/release/rust-mqtt`
 
@@ -86,3 +86,5 @@ Requirements are defined in `requirements.json`. Never reuse or renumber IDs.
 | Tag | Highlights |
 |---|---|
 | v1.0.0 | Foundation: Client trait, mock broker, v3.1.1 TCP client, embedded broker, RELAY v1.10 conformance, 80 requirements, ASIL-B safety artefacts |
+| v1.1.0 | Full safety pack: 124 reqs, HARA, TARA×10, FMEA×15, GSN safety case, boundary diagram, safety manual, ISO/IEC/DO compliance matrices |
+| v1.2.0 | RELAY v1.11 conformance (§17.7 CLI waiver removed — no impl change needed) |

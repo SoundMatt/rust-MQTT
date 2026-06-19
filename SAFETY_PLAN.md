@@ -47,7 +47,7 @@ The machine-readable requirement set is in `requirements.json`.
 | REQ-CONC | 3 | ASIL-B | Concurrency |
 | REQ-MOCK | 5 | QM | In-process mock broker |
 | REQ-BROKER | 3 | QM | Embedded TCP broker |
-| REQ-RELAY | 20 | ASIL-B | RELAY spec v1.10 conformance |
+| REQ-RELAY | 20 | ASIL-B | RELAY spec v1.11 conformance |
 | REQ-SAFE | 10 | ASIL-B | Functional safety (ISO 26262 Part 6) |
 | REQ-CYBER | 8 | ASIL-A | Cybersecurity (ISO 21434) |
 | REQ-HARA | 5 | ASIL-B | HARA-derived requirements |
@@ -92,7 +92,7 @@ The following tools are subject to qualification per IEC 61508-3:2010 §7.4.4:
 |---|---|---|---|
 | rustc | stable | Compiler | TQL-4 (qualification by process) |
 | rsfusa | 0.2.x | Safety analysis tool | TQL-3 (qualified by developer) |
-| relay | 1.10.x | Conformance checker | TQL-3 (qualified by developer) |
+| relay | 1.11.x | Conformance checker | TQL-3 (qualified by developer) |
 | cargo-audit | latest | Dependency vulnerability scanner | TQL-3 |
 
 ---
