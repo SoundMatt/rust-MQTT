@@ -1,0 +1,193 @@
+{
+  "format": "rust-fusa-boundary-v1",
+  "generated_at": "2026-06-19T00:00:00Z",
+  "module": "rust-MQTT",
+  "version": "1.0.0",
+  "description": "System boundary diagram for rust-MQTT as a Safety Element Out Of Context (SEOOC)",
+  "elements": {
+    "in_scope": [
+      {
+        "id": "E-01",
+        "name": "rust_mqtt library (src/lib.rs)",
+        "type": "module",
+        "role": "Root crate, re-exports all public API"
+      },
+      {
+        "id": "E-02",
+        "name": "Client trait (src/client.rs)",
+        "type": "interface",
+        "role": "Abstract transport interface: publish, subscribe, close"
+      },
+      {
+        "id": "E-03",
+        "name": "MockClient (src/mock/)",
+        "type": "module",
+        "role": "In-process broker for unit/integration testing"
+      },
+      {
+        "id": "E-04",
+        "name": "v3 TCP client (src/v3/)",
+        "type": "module",
+        "role": "MQTT v3.1.1 over TCP; real broker connection"
+      },
+      {
+        "id": "E-05",
+        "name": "Embedded broker (src/broker/)",
+        "type": "module",
+        "role": "Minimal TCP broker for integration tests only"
+      },
+      {
+        "id": "E-06",
+        "name": "RELAY adapter (src/adapt.rs)",
+        "type": "module",
+        "role": "Adapts Client to relay::Node for crossbar routing"
+      },
+      {
+        "id": "E-07",
+        "name": "Topic matching (src/topic.rs)",
+        "type": "module",
+        "role": "MQTT \u00a74.7 wildcard matching"
+      },
+      {
+        "id": "E-08",
+        "name": "Message types (src/message.rs)",
+        "type": "module",
+        "role": "MQTT Message, QoS, UserProperty; v5 properties"
+      },
+      {
+        "id": "E-09",
+        "name": "Error types (src/error.rs)",
+        "type": "module",
+        "role": "Error enum with RELAY sentinel mapping"
+      },
+      {
+        "id": "E-10",
+        "name": "RELAY types (src/relay.rs)",
+        "type": "module",
+        "role": "Bundled RELAY spec \u00a718.3 types"
+      },
+      {
+        "id": "E-11",
+        "name": "CLI binary (src/bin/main.rs)",
+        "type": "binary",
+        "role": "RELAY \u00a711 CLI: version, capabilities, status, send, subscribe, convert"
+      }
+    ],
+    "out_of_scope": [
+      {
+        "id": "X-01",
+        "name": "MQTT broker (Mosquitto / HiveMQ / AWS IoT)",
+        "type": "external",
+        "role": "Server-side broker \u2014 not part of this library"
+      },
+      {
+        "id": "X-02",
+        "name": "TLS termination",
+        "type": "external",
+        "role": "TLS/mTLS handled by rustls (tls feature); broker provides cert"
+      },
+      {
+        "id": "X-03",
+        "name": "Tokio async runtime",
+        "type": "runtime",
+        "role": "External dependency; rust-MQTT assumes tokio is initialized by caller"
+      },
+      {
+        "id": "X-04",
+        "name": "Vehicle application",
+        "type": "integration",
+        "role": "Integrating application; responsible for ASIL-D system-level safety goals"
+      },
+      {
+        "id": "X-05",
+        "name": "Operating system / network stack",
+        "type": "platform",
+        "role": "TCP sockets provided by OS; not qualified by this element"
+      },
+      {
+        "id": "X-06",
+        "name": "RELAY crossbar daemon",
+        "type": "external",
+        "role": "Runtime crossbar; rust-MQTT provides relay::Node adapter, not the daemon itself"
+      }
+    ]
+  },
+  "interfaces": [
+    {
+      "id": "IF-01",
+      "from": "Vehicle application",
+      "to": "Client trait",
+      "type": "API",
+      "description": "Application calls publish/subscribe/close via the Client trait"
+    },
+    {
+      "id": "IF-02",
+      "from": "Vehicle application",
+      "to": "RELAY adapter",
+      "type": "API",
+      "description": "Application calls adapt(client) \u2192 relay::Node for crossbar registration"
+    },
+    {
+      "id": "IF-03",
+      "from": "v3 TCP client",
+      "to": "MQTT broker",
+      "type": "TCP/MQTT",
+      "description": "MQTT v3.1.1 wire protocol over TCP; TLS optional"
+    },
+    {
+      "id": "IF-04",
+      "from": "RELAY adapter",
+      "to": "RELAY crossbar",
+      "type": "relay::Node",
+      "description": "relay::Node::send and relay::Node::subscribe for message exchange"
+    },
+    {
+      "id": "IF-05",
+      "from": "CLI binary",
+      "to": "RELAY CLI framework",
+      "type": "stdio/NDJSON",
+      "description": "RELAY \u00a711 contract: JSON on stdout, NDJSON on stdin for send/convert"
+    },
+    {
+      "id": "IF-06",
+      "from": "Client trait",
+      "to": "Topic matching",
+      "type": "Internal",
+      "description": "All publish/subscribe paths call match_topic for delivery routing"
+    },
+    {
+      "id": "IF-07",
+      "from": "RELAY adapter",
+      "to": "Message types",
+      "type": "Internal",
+      "description": "to_message/from_message convert between MQTT and RELAY message types"
+    }
+  ],
+  "trust_boundaries": [
+    {
+      "id": "TB-01",
+      "description": "Network boundary: data from MQTT broker is untrusted",
+      "crossing": "IF-03",
+      "risk": "Malformed packets, credential exposure"
+    },
+    {
+      "id": "TB-02",
+      "description": "Process boundary: CLI stdin is untrusted",
+      "crossing": "IF-05",
+      "risk": "Malformed JSON, oversized payloads"
+    },
+    {
+      "id": "TB-03",
+      "description": "Application boundary: caller-provided topics and payloads",
+      "crossing": "IF-01",
+      "risk": "Empty topics, oversized payloads, invalid QoS values"
+    }
+  ],
+  "safety_boundary_notes": [
+    "rust-MQTT is a SEOOC (ISO 26262 Part 8 \u00a76). It does not perform system-level HARA.",
+    "ASIL-B is claimed for all library functions listed in E-01 through E-11.",
+    "The embedded broker (E-05) is QM \u2014 test-only, never deployed in vehicle.",
+    "ASIL decomposition: applications requiring ASIL-D functions must duplicate the communication path independently.",
+    "Trust boundary TB-01 (network) is mitigated by length-checked parsing and no unsafe code."
+  ]
+}

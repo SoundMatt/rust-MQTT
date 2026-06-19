@@ -1,10 +1,14 @@
 {
   "buildType": "https://github.com/SoundMatt/rust-MQTT/blob/main/.github/workflows/ci.yml",
-  "builder": {"id": "https://github.com/actions/runner"},
+  "builder": {
+    "id": "https://github.com/actions/runner"
+  },
   "invocation": {
     "configSource": {
       "uri": "git+https://github.com/SoundMatt/rust-MQTT.git",
-      "digest": {"sha1": "HEAD"},
+      "digest": {
+        "sha1": "HEAD"
+      },
       "entryPoint": ".github/workflows/ci.yml"
     },
     "parameters": {},
@@ -13,13 +17,35 @@
   "metadata": {
     "buildStartedOn": "2026-06-19T00:00:00Z",
     "buildFinishedOn": "2026-06-19T00:00:00Z",
-    "completeness": {"parameters": false, "environment": false, "materials": false},
+    "completeness": {
+      "parameters": false,
+      "environment": false,
+      "materials": false
+    },
     "reproducible": false
   },
   "materials": [
     {
       "uri": "git+https://github.com/SoundMatt/rust-MQTT.git",
-      "digest": {"sha1": "HEAD"}
+      "digest": {
+        "sha1": "HEAD"
+      }
     }
-  ]
+  ],
+  "source": {
+    "uri": "git+https://github.com/SoundMatt/rust-MQTT.git",
+    "ref": "refs/tags/v1.0.0",
+    "digest": {
+      "sha1": "HEAD"
+    }
+  },
+  "subject": [
+    {
+      "name": "rust-mqtt",
+      "digest": {
+        "sha256": "see-ci-artifact"
+      }
+    }
+  ],
+  "slsa_level": 1
 }

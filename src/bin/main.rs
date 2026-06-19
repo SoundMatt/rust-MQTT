@@ -242,6 +242,7 @@ fn cmd_status(format: OutputFormat) -> Result<i32, Box<dyn std::error::Error>> {
 // send
 // ---------------------------------------------------------------------------
 
+//fusa:req REQ-RELAY-017
 async fn cmd_send(
     _broker: String,
     topic: String,
@@ -288,6 +289,7 @@ async fn cmd_send(
 // subscribe
 // ---------------------------------------------------------------------------
 
+//fusa:req REQ-RELAY-018
 async fn cmd_subscribe(
     _broker: String,
     topic: String,
@@ -328,6 +330,8 @@ async fn cmd_subscribe(
 // convert
 // ---------------------------------------------------------------------------
 
+//fusa:req REQ-RELAY-013
+//fusa:req REQ-RELAY-020
 fn cmd_convert(protocol: String, _format: OutputFormat) -> Result<i32, Box<dyn std::error::Error>> {
     if protocol.to_uppercase() != "MQTT" {
         eprintln!(

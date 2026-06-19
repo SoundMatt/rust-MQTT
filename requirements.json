@@ -1,90 +1,1630 @@
 {
   "requirements": [
-    {"id": "REQ-MQTT-001", "title": "Protocol type", "text": "The system shall define an MQTT protocol identifier (value 4) in the RELAY Protocol enum.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MQTT-002", "title": "Spec version", "text": "The system shall expose SPEC_VERSION = \"1.10\" bound to the RELAY spec version so the two cannot drift.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MQTT-003", "title": "Client trait", "text": "The system shall expose a Client trait with publish, subscribe, and close methods.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MQTT-004", "title": "Subscription type", "text": "The system shall expose a Subscription type that delivers messages over an async channel.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MQTT-005", "title": "Error sentinels", "text": "The system shall expose Closed, NotConnected, Timeout, PayloadTooLarge, TopicEmpty, and QoSUnsupported error variants.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MQTT-006", "title": "Topic validation", "text": "publish and subscribe shall return TopicEmpty when an empty topic string is passed.", "category": "validation", "criticality": "high"},
-    {"id": "REQ-MQTT-007", "title": "Lifecycle", "text": "close shall be idempotent; operations after close shall return Closed.", "category": "lifecycle", "criticality": "high"},
-    {"id": "REQ-MQTT-008", "title": "Concurrent safety", "text": "The Client trait implementation shall be safe for concurrent use from multiple async tasks.", "category": "concurrency", "criticality": "high"},
-    {"id": "REQ-MSG-001", "title": "Message topic", "text": "The system shall define a Message type with a non-empty topic field (UTF-8 string).", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MSG-002", "title": "Message payload", "text": "The system shall define a Message type with a raw byte payload field.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MSG-003", "title": "Message QoS", "text": "The system shall define a Message type with a QoS field.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MSG-004", "title": "Message retained", "text": "The system shall define a Message type with a retained flag.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-MSG-005", "title": "Message packet ID", "text": "The system shall define a Message type with a packet_id field (non-zero for QoS 1 and 2).", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-QOS-001", "title": "QoS AtMostOnce", "text": "The system shall define QoS::AtMostOnce (value 0) — fire-and-forget delivery.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-QOS-002", "title": "QoS AtLeastOnce", "text": "The system shall define QoS::AtLeastOnce (value 1) — acknowledged delivery.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-QOS-003", "title": "QoS ExactlyOnce", "text": "The system shall define QoS::ExactlyOnce (value 2) — exactly-once delivery.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-QOS-004", "title": "QoS validation", "text": "QoS::try_from shall reject values outside 0-2.", "category": "validation", "criticality": "high"},
-    {"id": "REQ-PUB-001", "title": "Publish", "text": "Client::publish shall deliver the message to all matching subscribers.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-PUB-002", "title": "Publish topic empty", "text": "Client::publish shall return TopicEmpty when topic is empty.", "category": "validation", "criticality": "high"},
-    {"id": "REQ-PUB-003", "title": "Publish retained", "text": "Client::publish_retained shall store the retained message and deliver it to future matching subscribers.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-PUB-004", "title": "Publish retained clear", "text": "Client::publish_retained with empty payload shall clear the retained message.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-PUB-005", "title": "Publish QoS 1 PUBACK", "text": "v3::Client::publish with QoS::AtLeastOnce shall wait for PUBACK before returning.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-PUB-006", "title": "Publish QoS 1 timeout", "text": "v3::Client::publish with QoS::AtLeastOnce shall return Timeout if PUBACK is not received in 30s.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-SUB-001", "title": "Subscribe", "text": "Client::subscribe shall deliver messages matching the topic filter to the subscription channel.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-SUB-002", "title": "Subscribe channel", "text": "Subscription::recv shall return messages in delivery order.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-SUB-003", "title": "Subscribe close", "text": "Subscription::close shall unsubscribe and drop the channel.", "category": "lifecycle", "criticality": "high"},
-    {"id": "REQ-SUB-004", "title": "Subscribe channel depth", "text": "SubscriberConfig::channel_depth shall set the channel capacity; 0 uses the default (64).", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-SUB-005", "title": "Subscribe back-pressure", "text": "SubscriberConfig::back_pressure shall control DropNewest, DropOldest, or Block behaviour.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-SUB-006", "title": "Subscribe wildcard hash", "text": "Client::subscribe shall accept '#' wildcard matching all non-system topics.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-SUB-007", "title": "Subscribe wildcard plus", "text": "Client::subscribe shall accept '+' single-level wildcard.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-SUB-008", "title": "Subscribe multi", "text": "Multiple concurrent subscriptions on the same client shall operate independently.", "category": "concurrency", "criticality": "high"},
-    {"id": "REQ-WILD-001", "title": "Wildcard exact match", "text": "match_topic shall return true when filter equals topic.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-002", "title": "Wildcard hash all", "text": "match_topic '#' shall match all non-system topics.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-003", "title": "Wildcard hash subtree", "text": "match_topic 'a/#' shall match 'a', 'a/b', and 'a/b/c'.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-004", "title": "Wildcard plus single", "text": "match_topic '+' shall match any single-level topic.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-005", "title": "Wildcard plus middle", "text": "match_topic 'a/+/c' shall match 'a/x/c' for any non-empty x.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-006", "title": "Wildcard system no match", "text": "match_topic '#' shall NOT match topics beginning with '$'.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-007", "title": "Wildcard plus no system", "text": "match_topic '+' at the first level shall NOT match '$' system topics.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-WILD-008", "title": "Wildcard system exact", "text": "match_topic '$SYS/#' shall match '$SYS/...' topics.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-V5-MSG-001", "title": "v5 response topic", "text": "Message shall carry an optional response_topic field for MQTT v5 §3.3.2.3.5.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-V5-MSG-002", "title": "v5 correlation data", "text": "Message shall carry optional correlation_data bytes for MQTT v5 §3.3.2.3.6.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-V5-MSG-003", "title": "v5 user properties", "text": "Message shall carry a list of UserProperty key/value pairs for MQTT v5 §3.3.2.3.7.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-V5-MSG-004", "title": "v5 content type", "text": "Message shall carry an optional content_type string for MQTT v5 §3.3.2.3.9.", "category": "functional", "criticality": "low"},
-    {"id": "REQ-V5-MSG-005", "title": "v5 expiry interval", "text": "Message shall carry an optional expiry_interval (seconds, 0 = no expiry) for MQTT v5 §3.3.2.3.3.", "category": "functional", "criticality": "low"},
-    {"id": "REQ-CONN-001", "title": "TCP connect", "text": "v3::Client::connect shall establish a TCP connection and complete the MQTT CONNECT/CONNACK handshake.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-002", "title": "Connect client ID", "text": "ConnectOptions shall accept a client_id string.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-003", "title": "Connect timeout", "text": "v3::Client::connect shall return Timeout if the handshake is not complete within connect_timeout.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-004", "title": "Connect clean session", "text": "ConnectOptions shall accept a clean_session flag.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-CONN-005", "title": "Connect username/password", "text": "ConnectOptions shall accept optional username and password credentials.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-CONN-006", "title": "Connect keepalive", "text": "ConnectOptions shall accept a keepalive_secs value; the client shall send PINGREQ on schedule.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-007", "title": "Connect LWT", "text": "ConnectOptions shall accept an optional WillMessage for last-will-and-testament.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-CONN-008", "title": "Connect refused", "text": "v3::Client::connect shall return ConnectionRefused if the broker returns a non-zero CONNACK return code.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-009", "title": "Disconnect", "text": "v3::Client::close shall send a DISCONNECT packet before closing the TCP connection.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-CONN-010", "title": "Disconnect idempotent", "text": "v3::Client::close shall be idempotent — calling it twice shall not error.", "category": "lifecycle", "criticality": "high"},
-    {"id": "REQ-CONN-011", "title": "Reconnect", "text": "After close, a new v3::Client::connect on the same address shall succeed.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-CONC-001", "title": "Concurrent publish", "text": "Multiple async tasks shall be able to call Client::publish concurrently without data races.", "category": "concurrency", "criticality": "high"},
-    {"id": "REQ-CONC-002", "title": "Concurrent subscribe", "text": "Multiple async tasks shall be able to call Client::subscribe concurrently.", "category": "concurrency", "criticality": "high"},
-    {"id": "REQ-CONC-003", "title": "Concurrent recv", "text": "Multiple subscriptions on the same client shall receive independently without blocking each other.", "category": "concurrency", "criticality": "high"},
-    {"id": "REQ-MOCK-001", "title": "Mock creation", "text": "MockClient::new shall create an in-process broker requiring no OS resources.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MOCK-002", "title": "Mock pub/sub", "text": "MockClient shall implement full publish/subscribe with §4.7 wildcard semantics.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MOCK-003", "title": "Mock closed errors", "text": "MockClient operations after close shall return Closed.", "category": "lifecycle", "criticality": "high"},
-    {"id": "REQ-MOCK-004", "title": "Mock retained", "text": "MockClient::publish_retained shall store and deliver retained messages to future subscribers.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-MOCK-005", "title": "Mock peer", "text": "MockClient::peer shall return a client sharing the same in-process broker.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-BROKER-001", "title": "Broker bind", "text": "Broker::start shall bind on the given address and accept connections.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-BROKER-002", "title": "Broker route", "text": "The broker shall route published messages to all matching subscribers.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-BROKER-003", "title": "Broker retained", "text": "The broker shall deliver retained messages to new subscribers.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-001", "title": "RELAY spec version", "text": "The system shall expose SPEC_VERSION = \"1.10\" matching the RELAY spec.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-002", "title": "RELAY protocol", "text": "The system shall use Protocol::Mqtt (value 4) in all relay::Message envelopes.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-003", "title": "RELAY error sentinels", "text": "Error variants shall map to the four RELAY sentinels: Closed, NotConnected, Timeout, PayloadTooLarge.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-004", "title": "RELAY back-pressure", "text": "BackPressurePolicy shall match RELAY spec §14: DropNewest=0, DropOldest=1, Block=2.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-005", "title": "RELAY subscriber options", "text": "SubscriberOptions shall carry chan_depth and back_pressure.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-RELAY-006", "title": "RELAY Node trait", "text": "The system shall expose a Node trait implementing protocol(), send(), subscribe(), close().", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-007", "title": "RELAY adapt", "text": "adapt(client) shall wrap a Client as a relay::Node per §13.7 entry point.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-008", "title": "RELAY to_message", "text": "Message::to_relay_message shall produce a relay::Message with meta keys mqtt.qos and mqtt.retained.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-009", "title": "RELAY from_message", "text": "Message::from_relay_message shall restore topic, payload, QoS, and retained from meta.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-010", "title": "RELAY CLI version", "text": "The CLI 'version' command shall output tool, protocol, protocol_int, version, spec_version, language.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-011", "title": "RELAY CLI capabilities", "text": "The CLI 'capabilities' command shall output kind=capabilities, adapt=true, commands list.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-012", "title": "RELAY CLI status", "text": "The CLI 'status' command shall output protocol, tool, version, healthy, connected, endpoint.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-013", "title": "RELAY CLI convert", "text": "The CLI 'convert --protocol MQTT' shall read mqtt.Message JSON from stdin and write relay.Message JSON to stdout. Exit 0=ok, 1=invalid input, 2=invalid args.", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-014", "title": "RELAY Drainer", "text": "The system shall expose a Drainer trait for close_with_drain (§9).", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-RELAY-015", "title": "RELAY HealthProvider", "text": "The system shall expose a HealthProvider trait returning HealthStatus.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-RELAY-016", "title": "RELAY MetricsProvider", "text": "The system shall expose a MetricsProvider trait returning MetricsSnapshot.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-RELAY-017", "title": "RELAY crossbar send sink", "text": "The CLI 'send --format json' shall read NDJSON relay.Message from stdin and publish each (crossbar destination mode, §11.2).", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-018", "title": "RELAY subscribe source", "text": "The CLI 'subscribe --format json' shall write received messages as NDJSON relay.Message to stdout (crossbar source mode, §11.2).", "category": "functional", "criticality": "high"},
-    {"id": "REQ-RELAY-019", "title": "RELAY virtual module", "text": "The system shall expose a 'virtual' module alias for the in-process transport per §13.7.2.", "category": "functional", "criticality": "medium"},
-    {"id": "REQ-RELAY-020", "title": "RELAY golden vector", "text": "to_message and from_message shall produce output byte-identical to the RELAY spec/vectors/mqtt-message.json canonical vector.", "category": "functional", "criticality": "high"}
+    {
+      "id": "REQ-MQTT-001",
+      "title": "Protocol type",
+      "text": "The system shall define an MQTT protocol identifier (value 4) in the RELAY Protocol enum.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "relay_conformance::spec_version_is_1_10"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-002",
+      "title": "Spec version",
+      "text": "The system shall expose SPEC_VERSION = \"1.10\" bound to the RELAY spec version so the two cannot drift.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "relay_conformance::spec_version_is_1_10"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-003",
+      "title": "Client trait",
+      "text": "The system shall expose a Client trait with publish, subscribe, and close methods.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-004",
+      "title": "Subscription type",
+      "text": "The system shall expose a Subscription type that delivers messages over an async channel.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-005",
+      "title": "Error sentinels",
+      "text": "The system shall expose Closed, NotConnected, Timeout, PayloadTooLarge, TopicEmpty, and QoSUnsupported error variants.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "relay_conformance::error_sentinel_kind_mapping"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-006",
+      "title": "Topic validation",
+      "text": "publish and subscribe shall return TopicEmpty when an empty topic string is passed.",
+      "category": "validation",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "relay_conformance::error_sentinel_kind_mapping"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-007",
+      "title": "Lifecycle",
+      "text": "close shall be idempotent; operations after close shall return Closed.",
+      "category": "lifecycle",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "relay_conformance::protocol_int_is_4"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-008",
+      "title": "Concurrent safety",
+      "text": "The Client trait implementation shall be safe for concurrent use from multiple async tasks.",
+      "category": "concurrency",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/adapt.rs",
+      "tests": [
+        "mock_integration::adapt_node_send_and_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-MSG-001",
+      "title": "Message topic",
+      "text": "The system shall define a Message type with a non-empty topic field (UTF-8 string).",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_message_decodes"
+      ]
+    },
+    {
+      "id": "REQ-MSG-002",
+      "title": "Message payload",
+      "text": "The system shall define a Message type with a raw byte payload field.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_message_decodes"
+      ]
+    },
+    {
+      "id": "REQ-MSG-003",
+      "title": "Message QoS",
+      "text": "The system shall define a Message type with a QoS field.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::relay_message_meta_canonical"
+      ]
+    },
+    {
+      "id": "REQ-MSG-004",
+      "title": "Message retained",
+      "text": "The system shall define a Message type with a retained flag.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_message_decodes"
+      ]
+    },
+    {
+      "id": "REQ-MSG-005",
+      "title": "Message packet ID",
+      "text": "The system shall define a Message type with a packet_id field (non-zero for QoS 1 and 2).",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_to_relay_message"
+      ]
+    },
+    {
+      "id": "REQ-QOS-001",
+      "title": "QoS AtMostOnce",
+      "text": "The system shall define QoS::AtMostOnce (value 0) \u2014 fire-and-forget delivery.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::qos_try_from_valid"
+      ]
+    },
+    {
+      "id": "REQ-QOS-002",
+      "title": "QoS AtLeastOnce",
+      "text": "The system shall define QoS::AtLeastOnce (value 1) \u2014 acknowledged delivery.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::relay_message_meta_canonical",
+        "safety_requirements::qos_at_least_once_value"
+      ]
+    },
+    {
+      "id": "REQ-QOS-003",
+      "title": "QoS ExactlyOnce",
+      "text": "The system shall define QoS::ExactlyOnce (value 2) \u2014 exactly-once delivery.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::relay_message_meta_canonical",
+        "safety_requirements::qos_exactly_once_value"
+      ]
+    },
+    {
+      "id": "REQ-QOS-004",
+      "title": "QoS validation",
+      "text": "QoS::try_from shall reject values outside 0-2.",
+      "category": "validation",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::qos_invalid_rejected"
+      ]
+    },
+    {
+      "id": "REQ-PUB-001",
+      "title": "Publish",
+      "text": "Client::publish shall deliver the message to all matching subscribers.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-PUB-002",
+      "title": "Publish topic empty",
+      "text": "Client::publish shall return TopicEmpty when topic is empty.",
+      "category": "validation",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-PUB-003",
+      "title": "Publish retained",
+      "text": "Client::publish_retained shall store the retained message and deliver it to future matching subscribers.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_retained_delivery"
+      ]
+    },
+    {
+      "id": "REQ-PUB-004",
+      "title": "Publish retained clear",
+      "text": "Client::publish_retained with empty payload shall clear the retained message.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_retained_delivery"
+      ]
+    },
+    {
+      "id": "REQ-PUB-005",
+      "title": "Publish QoS 1 PUBACK",
+      "text": "v3::Client::publish with QoS::AtLeastOnce shall wait for PUBACK before returning.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::pub_qos0_no_ack",
+        "safety_requirements::pub_qos1_ack"
+      ]
+    },
+    {
+      "id": "REQ-PUB-006",
+      "title": "Publish QoS 1 timeout",
+      "text": "v3::Client::publish with QoS::AtLeastOnce shall return Timeout if PUBACK is not received in 30s.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::pub_closed_returns_error"
+      ]
+    },
+    {
+      "id": "REQ-SUB-001",
+      "title": "Subscribe",
+      "text": "Client::subscribe shall deliver messages matching the topic filter to the subscription channel.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-SUB-002",
+      "title": "Subscribe channel",
+      "text": "Subscription::recv shall return messages in delivery order.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-SUB-003",
+      "title": "Subscribe close",
+      "text": "Subscription::close shall unsubscribe and drop the channel.",
+      "category": "lifecycle",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_hash_wildcard"
+      ]
+    },
+    {
+      "id": "REQ-SUB-004",
+      "title": "Subscribe channel depth",
+      "text": "SubscriberConfig::channel_depth shall set the channel capacity; 0 uses the default (64).",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_channel_depth_config"
+      ]
+    },
+    {
+      "id": "REQ-SUB-005",
+      "title": "Subscribe back-pressure",
+      "text": "SubscriberConfig::back_pressure shall control DropNewest, DropOldest, or Block behaviour.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock_integration::mock_channel_depth_config"
+      ]
+    },
+    {
+      "id": "REQ-SUB-006",
+      "title": "Subscribe wildcard hash",
+      "text": "Client::subscribe shall accept '#' wildcard matching all non-system topics.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::sub_back_pressure_drop_newest"
+      ]
+    },
+    {
+      "id": "REQ-SUB-007",
+      "title": "Subscribe wildcard plus",
+      "text": "Client::subscribe shall accept '+' single-level wildcard.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::sub_back_pressure_drop_oldest"
+      ]
+    },
+    {
+      "id": "REQ-SUB-008",
+      "title": "Subscribe multi",
+      "text": "Multiple concurrent subscriptions on the same client shall operate independently.",
+      "category": "concurrency",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::sub_back_pressure_block"
+      ]
+    },
+    {
+      "id": "REQ-WILD-001",
+      "title": "Wildcard exact match",
+      "text": "match_topic shall return true when filter equals topic.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "relay_conformance::match_topic_conformance"
+      ]
+    },
+    {
+      "id": "REQ-WILD-002",
+      "title": "Wildcard hash all",
+      "text": "match_topic '#' shall match all non-system topics.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "mock_integration::mock_system_topic_no_hash"
+      ]
+    },
+    {
+      "id": "REQ-WILD-003",
+      "title": "Wildcard hash subtree",
+      "text": "match_topic 'a/#' shall match 'a', 'a/b', and 'a/b/c'.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_plus_single_level"
+      ]
+    },
+    {
+      "id": "REQ-WILD-004",
+      "title": "Wildcard plus single",
+      "text": "match_topic '+' shall match any single-level topic.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_hash_multilevel"
+      ]
+    },
+    {
+      "id": "REQ-WILD-005",
+      "title": "Wildcard plus middle",
+      "text": "match_topic 'a/+/c' shall match 'a/x/c' for any non-empty x.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_sys_topic_not_matched_by_plus"
+      ]
+    },
+    {
+      "id": "REQ-WILD-006",
+      "title": "Wildcard system no match",
+      "text": "match_topic '#' shall NOT match topics beginning with '$'.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_sys_topic_explicit_prefix"
+      ]
+    },
+    {
+      "id": "REQ-WILD-007",
+      "title": "Wildcard plus no system",
+      "text": "match_topic '+' at the first level shall NOT match '$' system topics.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_empty_filter_rejected"
+      ]
+    },
+    {
+      "id": "REQ-WILD-008",
+      "title": "Wildcard system exact",
+      "text": "match_topic '$SYS/#' shall match '$SYS/...' topics.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::wildcard_empty_topic_rejected"
+      ]
+    },
+    {
+      "id": "REQ-V5-MSG-001",
+      "title": "v5 response topic",
+      "text": "Message shall carry an optional response_topic field for MQTT v5 \u00a73.3.2.3.5.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_response_topic_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-V5-MSG-002",
+      "title": "v5 correlation data",
+      "text": "Message shall carry optional correlation_data bytes for MQTT v5 \u00a73.3.2.3.6.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_correlation_data_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-V5-MSG-003",
+      "title": "v5 user properties",
+      "text": "Message shall carry a list of UserProperty key/value pairs for MQTT v5 \u00a73.3.2.3.7.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_user_properties_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-V5-MSG-004",
+      "title": "v5 content type",
+      "text": "Message shall carry an optional content_type string for MQTT v5 \u00a73.3.2.3.9.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_content_type_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-V5-MSG-005",
+      "title": "v5 expiry interval",
+      "text": "Message shall carry an optional expiry_interval (seconds, 0 = no expiry) for MQTT v5 \u00a73.3.2.3.3.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_expiry_interval_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-CONN-001",
+      "title": "TCP connect",
+      "text": "v3::Client::connect shall establish a TCP connection and complete the MQTT CONNECT/CONNACK handshake.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-002",
+      "title": "Connect client ID",
+      "text": "ConnectOptions shall accept a client_id string.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-003",
+      "title": "Connect timeout",
+      "text": "v3::Client::connect shall return Timeout if the handshake is not complete within connect_timeout.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-004",
+      "title": "Connect clean session",
+      "text": "ConnectOptions shall accept a clean_session flag.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-005",
+      "title": "Connect username/password",
+      "text": "ConnectOptions shall accept optional username and password credentials.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-006",
+      "title": "Connect keepalive",
+      "text": "ConnectOptions shall accept a keepalive_secs value; the client shall send PINGREQ on schedule.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-007",
+      "title": "Connect LWT",
+      "text": "ConnectOptions shall accept an optional WillMessage for last-will-and-testament.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_options_defaults"
+      ]
+    },
+    {
+      "id": "REQ-CONN-008",
+      "title": "Connect refused",
+      "text": "v3::Client::connect shall return ConnectionRefused if the broker returns a non-zero CONNACK return code.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::conn_closed_publish_errors",
+        "mock_integration::mock_closed_errors"
+      ]
+    },
+    {
+      "id": "REQ-CONN-009",
+      "title": "Disconnect",
+      "text": "v3::Client::close shall send a DISCONNECT packet before closing the TCP connection.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_connack_codes_checked"
+      ]
+    },
+    {
+      "id": "REQ-CONN-010",
+      "title": "Disconnect idempotent",
+      "text": "v3::Client::close shall be idempotent \u2014 calling it twice shall not error.",
+      "category": "lifecycle",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_keepalive_configured"
+      ]
+    },
+    {
+      "id": "REQ-CONN-011",
+      "title": "Reconnect",
+      "text": "After close, a new v3::Client::connect on the same address shall succeed.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/packet.rs",
+      "tests": [
+        "safety_requirements::conn_lwt_encoded"
+      ]
+    },
+    {
+      "id": "REQ-CONC-001",
+      "title": "Concurrent publish",
+      "text": "Multiple async tasks shall be able to call Client::publish concurrently without data races.",
+      "category": "concurrency",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::concurrent_publish_safe"
+      ]
+    },
+    {
+      "id": "REQ-CONC-002",
+      "title": "Concurrent subscribe",
+      "text": "Multiple async tasks shall be able to call Client::subscribe concurrently.",
+      "category": "concurrency",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::concurrent_subscribe_safe"
+      ]
+    },
+    {
+      "id": "REQ-CONC-003",
+      "title": "Concurrent recv",
+      "text": "Multiple subscriptions on the same client shall receive independently without blocking each other.",
+      "category": "concurrency",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::concurrent_publish_safe"
+      ]
+    },
+    {
+      "id": "REQ-MOCK-001",
+      "title": "Mock creation",
+      "text": "MockClient::new shall create an in-process broker requiring no OS resources.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_publish_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-MOCK-002",
+      "title": "Mock pub/sub",
+      "text": "MockClient shall implement full publish/subscribe with \u00a74.7 wildcard semantics.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_hash_wildcard"
+      ]
+    },
+    {
+      "id": "REQ-MOCK-003",
+      "title": "Mock closed errors",
+      "text": "MockClient operations after close shall return Closed.",
+      "category": "lifecycle",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_closed_errors"
+      ]
+    },
+    {
+      "id": "REQ-MOCK-004",
+      "title": "Mock retained",
+      "text": "MockClient::publish_retained shall store and deliver retained messages to future subscribers.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_retained_delivery"
+      ]
+    },
+    {
+      "id": "REQ-MOCK-005",
+      "title": "Mock peer",
+      "text": "MockClient::peer shall return a client sharing the same in-process broker.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_peer_sees_messages"
+      ]
+    },
+    {
+      "id": "REQ-BROKER-001",
+      "title": "Broker bind",
+      "text": "Broker::start shall bind on the given address and accept connections.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/broker/mod.rs",
+      "tests": [
+        "broker::tests::broker_connect"
+      ]
+    },
+    {
+      "id": "REQ-BROKER-002",
+      "title": "Broker route",
+      "text": "The broker shall route published messages to all matching subscribers.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/broker/mod.rs",
+      "tests": [
+        "broker::tests::broker_pubsub"
+      ]
+    },
+    {
+      "id": "REQ-BROKER-003",
+      "title": "Broker retained",
+      "text": "The broker shall deliver retained messages to new subscribers.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/broker/mod.rs",
+      "tests": [
+        "broker::tests::broker_pubsub"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-001",
+      "title": "RELAY spec version",
+      "text": "The system shall expose SPEC_VERSION = \"1.10\" matching the RELAY spec.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "relay_conformance::spec_version_is_1_10"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-002",
+      "title": "RELAY protocol",
+      "text": "The system shall use Protocol::Mqtt (value 4) in all relay::Message envelopes.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/relay.rs",
+      "tests": [
+        "relay_conformance::relay_message_protocol_int"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-003",
+      "title": "RELAY error sentinels",
+      "text": "Error variants shall map to the four RELAY sentinels: Closed, NotConnected, Timeout, PayloadTooLarge.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "relay_conformance::error_relay_conversion"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-004",
+      "title": "RELAY back-pressure",
+      "text": "BackPressurePolicy shall match RELAY spec \u00a714: DropNewest=0, DropOldest=1, Block=2.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "relay_conformance::back_pressure_policy_values"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-005",
+      "title": "RELAY subscriber options",
+      "text": "SubscriberOptions shall carry chan_depth and back_pressure.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/relay.rs",
+      "tests": [
+        "mock_integration::adapt_node_send_and_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-006",
+      "title": "RELAY Node trait",
+      "text": "The system shall expose a Node trait implementing protocol(), send(), subscribe(), close().",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/relay.rs",
+      "tests": [
+        "mock_integration::adapt_node_send_and_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-007",
+      "title": "RELAY adapt",
+      "text": "adapt(client) shall wrap a Client as a relay::Node per \u00a713.7 entry point.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/adapt.rs",
+      "tests": [
+        "mock_integration::adapt_node_send_and_subscribe"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-008",
+      "title": "RELAY to_message",
+      "text": "Message::to_relay_message shall produce a relay::Message with meta keys mqtt.qos and mqtt.retained.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_to_relay_message",
+        "relay_conformance::relay_message_meta_canonical"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-009",
+      "title": "RELAY from_message",
+      "text": "Message::from_relay_message shall restore topic, payload, QoS, and retained from meta.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_from_relay_message_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-010",
+      "title": "RELAY CLI version",
+      "text": "The CLI 'version' command shall output tool, protocol, protocol_int, version, spec_version, language.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_version_json"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-011",
+      "title": "RELAY CLI capabilities",
+      "text": "The CLI 'capabilities' command shall output kind=capabilities, adapt=true, commands list.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_capabilities_json"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-012",
+      "title": "RELAY CLI status",
+      "text": "The CLI 'status' command shall output protocol, tool, version, healthy, connected, endpoint.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_status_json"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-013",
+      "title": "RELAY CLI convert",
+      "text": "The CLI 'convert --protocol MQTT' shall read mqtt.Message JSON from stdin and write relay.Message JSON to stdout. Exit 0=ok, 1=invalid input, 2=invalid args.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_convert_ok",
+        "relay_conformance::cli_convert_invalid",
+        "relay_conformance::cli_convert_bad_proto"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-014",
+      "title": "RELAY Drainer",
+      "text": "The system shall expose a Drainer trait for close_with_drain (\u00a79).",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::drainer_close_with_drain"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-015",
+      "title": "RELAY HealthProvider",
+      "text": "The system shall expose a HealthProvider trait returning HealthStatus.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::health_provider_status"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-016",
+      "title": "RELAY MetricsProvider",
+      "text": "The system shall expose a MetricsProvider trait returning MetricsSnapshot.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::metrics_provider_snapshot"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-017",
+      "title": "RELAY crossbar send sink",
+      "text": "The CLI 'send --format json' shall read NDJSON relay.Message from stdin and publish each (crossbar destination mode, \u00a711.2).",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_send_json_sink"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-018",
+      "title": "RELAY subscribe source",
+      "text": "The CLI 'subscribe --format json' shall write received messages as NDJSON relay.Message to stdout (crossbar source mode, \u00a711.2).",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_subscribe_json_source"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-019",
+      "title": "RELAY virtual module",
+      "text": "The system shall expose a 'virtual' module alias for the in-process transport per \u00a713.7.2.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "safety_requirements::virtual_module_alias"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-020",
+      "title": "RELAY golden vector",
+      "text": "to_message and from_message shall produce output byte-identical to the RELAY spec/vectors/mqtt-message.json canonical vector.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "relay_conformance::vector_to_relay_message"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-001",
+      "title": "No unsafe Rust",
+      "text": "The library shall contain no `unsafe` blocks in library code (ASIL-B safe-Rust mandate, ISO 26262 Part 6 \u00a78.4.2).",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/lib.rs",
+      "tests": [
+        "safety_requirements::no_unsafe_in_lib"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-002",
+      "title": "Defensive copy on subscribe",
+      "text": "The subscribe path shall return a new Subscription instance and shall not share internal channel state across callers.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::subscribe_returns_independent_subs"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-003",
+      "title": "Back-pressure prevents unbounded memory",
+      "text": "The system shall apply a configured back-pressure policy (DropNewest, DropOldest, or Block) when the subscriber channel is full, preventing unbounded memory growth.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::sub_back_pressure_drop_newest"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-004",
+      "title": "Closed state is terminal",
+      "text": "After close() returns Ok, all subsequent publish and subscribe calls shall return Err(Error::Closed). The closed state shall not be reversible.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "mock_integration::mock_closed_errors",
+        "safety_requirements::conn_closed_publish_errors"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-005",
+      "title": "Payload length bounds",
+      "text": "The system shall reject publish payloads exceeding 268,435,455 bytes (MQTT \u00a72.1 maximum) and return Err(Error::PayloadTooLarge).",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/packet.rs",
+      "tests": [
+        "safety_requirements::pub_oversized_payload_rejected"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-006",
+      "title": "Topic length bounds",
+      "text": "The system shall reject empty topics (Err(Error::TopicEmpty)) and topics exceeding 65535 UTF-8 bytes (MQTT \u00a74.7.3).",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "safety_requirements::topic_empty_rejected",
+        "safety_requirements::topic_max_length_accepted"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-007",
+      "title": "Atomic close under concurrency",
+      "text": "The close operation shall be atomic: concurrent publish calls racing with close shall each either succeed or return Err(Error::Closed), never panic or deadlock.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::concurrent_close_safe"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-008",
+      "title": "SEOOC assumption documentation",
+      "text": "The Safety Manual shall document Safety Element Out Of Context (SEOOC) assumptions and integration obligations per ISO 26262 Part 8 \u00a76.",
+      "category": "process",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "SAFETY_MANUAL.md",
+      "tests": [
+        "safety_requirements::safety_manual_present"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-009",
+      "title": "Tool qualification evidence",
+      "text": "Tool qualification evidence for rustc (TQL-4), rsfusa (TQL-3), and relay (TQL-3) shall be present in the safety artifacts.",
+      "category": "process",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "SAFETY_PLAN.md",
+      "tests": [
+        "safety_requirements::safety_plan_present"
+      ]
+    },
+    {
+      "id": "REQ-SAFE-010",
+      "title": "Requirement traceability 100%",
+      "text": "Every requirement in requirements.json shall have at least one source annotation (//fusa:req) and at least one test reference. Coverage shall be 100% before release.",
+      "category": "process",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "requirements.json",
+      "tests": [
+        "safety_requirements::all_reqs_have_impl_trace",
+        "safety_requirements::all_reqs_have_test_trace"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-001",
+      "title": "No code execution from network input",
+      "text": "The library shall not execute any code derived from MQTT packet contents. All parsing shall produce typed values only (no eval, no unsafe transmute from network bytes).",
+      "category": "security",
+      "criticality": "high",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "src/v3/packet.rs",
+      "tests": [
+        "safety_requirements::packet_parse_no_exec"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-002",
+      "title": "Length-checked packet parsing",
+      "text": "All variable-length fields in MQTT packets (topic, payload, protocol name) shall be bounds-checked against the declared length before accessing. Parsing shall return Err on malformed length.",
+      "category": "security",
+      "criticality": "high",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "src/v3/packet.rs",
+      "tests": [
+        "safety_requirements::packet_truncated_topic_rejected",
+        "safety_requirements::packet_truncated_payload_rejected"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-003",
+      "title": "Authentication credential handling",
+      "text": "MQTT credentials (username, password) shall be transmitted only inside the CONNECT packet, never logged, and cleared from memory after use.",
+      "category": "security",
+      "criticality": "high",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::credentials_not_logged"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-004",
+      "title": "System topic namespace isolation",
+      "text": "A bare `#` or `+` wildcard at the first level shall NOT match `$SYS/` topics (MQTT \u00a74.7.2). System namespace must be explicitly addressed.",
+      "category": "security",
+      "criticality": "high",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "src/topic.rs",
+      "tests": [
+        "relay_conformance::match_topic_conformance",
+        "mock_integration::mock_system_topic_no_hash"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-005",
+      "title": "Dependency vulnerability scanning",
+      "text": "The CI pipeline shall run `cargo audit` on every build and fail on known vulnerabilities rated CVSS >= 7.0.",
+      "category": "security",
+      "criticality": "high",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": ".github/workflows/ci.yml",
+      "tests": [
+        "safety_requirements::cargo_audit_clean"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-006",
+      "title": "SBOM present",
+      "text": "A valid SPDX-2.3 SBOM shall be generated for every release listing all direct and transitive Rust dependencies.",
+      "category": "security",
+      "criticality": "medium",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "sbom.json",
+      "tests": [
+        "safety_requirements::sbom_present_and_valid"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-007",
+      "title": "Build provenance",
+      "text": "Every release binary shall be accompanied by a SLSA-compatible provenance document recording builder, source, and build steps.",
+      "category": "security",
+      "criticality": "medium",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "provenance.json",
+      "tests": [
+        "safety_requirements::provenance_present_and_valid"
+      ]
+    },
+    {
+      "id": "REQ-CYBER-008",
+      "title": "Packet-id uniqueness",
+      "text": "Packet identifiers for QoS 1 PUBLISH and SUBSCRIBE shall be drawn from a monotonically increasing counter and never reused within a session.",
+      "category": "security",
+      "criticality": "medium",
+      "asil": "ASIL-A",
+      "sil": 1,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::packet_id_monotonic"
+      ]
+    },
+    {
+      "id": "REQ-HARA-001",
+      "title": "HARA document present",
+      "text": "A Hazard Analysis and Risk Assessment document (hara.json) shall be present, covering all hazardous events, their severity, exposure, controllability, and ASIL determination.",
+      "category": "process",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "hara.json",
+      "tests": [
+        "safety_requirements::hara_present_and_valid"
+      ]
+    },
+    {
+      "id": "REQ-HARA-002",
+      "title": "Lost message hazard mitigated",
+      "text": "The hazardous event 'vehicle signal update lost' (severity S2, exposure E4, controllability C2 \u2192 ASIL-B) shall be mitigated by QoS >= 1 on safety-critical signals.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::qos_at_least_once_value"
+      ]
+    },
+    {
+      "id": "REQ-HARA-003",
+      "title": "Stale message hazard mitigated",
+      "text": "The hazardous event 'stale retained message delivered' shall be mitigated by expiry_interval enforcement and documentation in the safety manual.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/message.rs",
+      "tests": [
+        "safety_requirements::v5_expiry_interval_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-HARA-004",
+      "title": "Topic misrouting hazard mitigated",
+      "text": "The hazardous event 'message delivered to wrong subscriber' shall be mitigated by \u00a74.7-compliant wildcard matching verified by 10+ unit tests.",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/topic.rs",
+      "tests": [
+        "relay_conformance::match_topic_conformance"
+      ]
+    },
+    {
+      "id": "REQ-HARA-005",
+      "title": "Buffer exhaustion hazard mitigated",
+      "text": "The hazardous event 'subscriber channel exhaustion causing system hang' shall be mitigated by configurable back-pressure policies (DropNewest, DropOldest, Block).",
+      "category": "safety",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::sub_back_pressure_drop_newest",
+        "safety_requirements::sub_back_pressure_drop_oldest"
+      ]
+    },
+    {
+      "id": "REQ-ERR-001",
+      "title": "Error variants exhaustive",
+      "text": "All fallible operations shall return Result<T, Error> where Error covers all possible failure modes. No operation shall panic on valid inputs.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::errors_are_result_not_panic"
+      ]
+    },
+    {
+      "id": "REQ-ERR-002",
+      "title": "IO errors wrapped",
+      "text": "All std::io::Error values shall be wrapped in Error::Io, preserving the original cause for diagnostics.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::io_error_wrapped"
+      ]
+    },
+    {
+      "id": "REQ-ERR-003",
+      "title": "Connection refused code preserved",
+      "text": "CONNACK return codes (0x00\u20130x05) shall be preserved in Error::ConnectionRefused(code) for caller diagnostics.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::conn_connack_codes_checked"
+      ]
+    },
+    {
+      "id": "REQ-ERR-004",
+      "title": "Protocol error isolated",
+      "text": "Malformed packet data received from the network shall produce Error::Protocol(description) and terminate the connection, not propagate raw bytes to the caller.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::protocol_error_isolated"
+      ]
+    },
+    {
+      "id": "REQ-ERR-005",
+      "title": "Timeout surfaces correctly",
+      "text": "If a connect timeout expires before CONNACK is received, Error::Timeout shall be returned.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "safety_requirements::conn_timeout_returns_error"
+      ]
+    },
+    {
+      "id": "REQ-ERR-006",
+      "title": "Error implements Send+Sync",
+      "text": "Error shall implement Send + Sync so it can be used across async task boundaries and with anyhow/thiserror.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "safety_requirements::error_send_sync"
+      ]
+    },
+    {
+      "id": "REQ-DIAG-001",
+      "title": "Health status queryable",
+      "text": "Implementations shall optionally expose HealthProvider::health() returning HealthStatus { healthy, details }.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::health_provider_status"
+      ]
+    },
+    {
+      "id": "REQ-DIAG-002",
+      "title": "Metrics snapshot queryable",
+      "text": "Implementations shall optionally expose MetricsProvider::metrics() returning MetricsSnapshot with publish/subscribe counters.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/client.rs",
+      "tests": [
+        "safety_requirements::metrics_provider_snapshot"
+      ]
+    },
+    {
+      "id": "REQ-DIAG-003",
+      "title": "CLI status command",
+      "text": "The CLI 'status' command shall report healthy=true when the binary is functional, per RELAY \u00a712.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "relay_conformance::cli_status_json"
+      ]
+    },
+    {
+      "id": "REQ-DIAG-004",
+      "title": "Subscription count observable",
+      "text": "MockClient shall expose subscription_count() for test observability without requiring message exchange.",
+      "category": "functional",
+      "criticality": "low",
+      "asil": "QM",
+      "sil": 0,
+      "impl": "src/mock/mod.rs",
+      "tests": [
+        "safety_requirements::subscription_count_observable"
+      ]
+    },
+    {
+      "id": "REQ-DO-001",
+      "title": "DO-178C Level D traceability",
+      "text": "All requirements shall have bidirectional traceability: source annotation \u2194 requirement record \u2194 test. This satisfies DO-178C \u00a75.1.1 (a) for DAL-D.",
+      "category": "process",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "requirements.json",
+      "tests": [
+        "safety_requirements::all_reqs_have_impl_trace"
+      ]
+    },
+    {
+      "id": "REQ-DO-002",
+      "title": "Structural coverage MC/DC eligible",
+      "text": "All decision-bearing conditions in the library shall be exercisable by the test suite (MC/DC for DAL-A, DC for DAL-C; current suite satisfies DAL-D statement coverage).",
+      "category": "process",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "tests/",
+      "tests": [
+        "safety_requirements::wildcard_plus_single_level",
+        "safety_requirements::wildcard_hash_multilevel"
+      ]
+    },
+    {
+      "id": "REQ-DO-003",
+      "title": "Deactivated code absent",
+      "text": "The library shall contain no permanently deactivated code (dead code), as prohibited by DO-178C \u00a74.4.2 and detected by `cargo clippy --D dead_code`.",
+      "category": "process",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/",
+      "tests": [
+        "safety_requirements::no_dead_code_in_lib"
+      ]
+    },
+    {
+      "id": "REQ-DO-004",
+      "title": "Configuration management baseline",
+      "text": "All source, tests, requirements, and safety artifacts shall be under version control with an identified baseline (Cargo.lock committed, git tag per release).",
+      "category": "process",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "Cargo.lock",
+      "tests": [
+        "safety_requirements::cargo_lock_present"
+      ]
+    },
+    {
+      "id": "REQ-DO-005",
+      "title": "Verification independence",
+      "text": "The `relay-conform` CI job shall be independent of the `build-test` job, providing independent verification of RELAY conformance per DO-178C \u00a76.4.",
+      "category": "process",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": ".github/workflows/ci.yml",
+      "tests": [
+        "safety_requirements::ci_relay_job_independent"
+      ]
+    }
   ]
 }
