@@ -1,0 +1,50 @@
+[package]
+name = "rust-mqtt"
+version = "1.0.0"
+edition = "2021"
+description = "rust-MQTT: Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready. RELAY spec v1.10."
+license = "MPL-2.0"
+repository = "https://github.com/SoundMatt/rust-MQTT"
+homepage = "https://github.com/SoundMatt/rust-MQTT"
+keywords = ["mqtt", "iot", "automotive", "embedded", "relay"]
+categories = ["network-programming", "embedded", "asynchronous"]
+rust-version = "1.75"
+
+[lib]
+name = "rust_mqtt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rust-mqtt"
+path = "src/bin/main.rs"
+
+[features]
+default = []
+## Enables TLS support for the v3 and v5 TCP clients.
+tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-native-certs"]
+## Enables WebSocket transport for the v3 client (MQTT-over-WS per RFC 6455).
+websocket = ["dep:tokio-tungstenite"]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+base64 = "0.22"
+bytes = "1"
+tokio-util = { version = "0.7", features = ["codec"] }
+
+# Optional TLS
+rustls = { version = "0.23", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+rustls-native-certs = { version = "0.7", optional = true }
+
+# Optional WebSocket
+tokio-tungstenite = { version = "0.24", optional = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+serde_json = "1"

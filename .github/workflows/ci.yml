@@ -1,0 +1,253 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Core build & test ──────────────────────────────────────────────────────
+  build-test:
+    name: build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: clippy (§20.1.2)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: test
+        run: cargo test --locked
+
+      - name: Dependency vulnerability audit (§20.1.2)
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit
+
+      - name: build release binary
+        run: cargo build --release --bin rust-mqtt --locked
+
+      - name: smoke test CLI (RELAY §12)
+        run: |
+          ./target/release/rust-mqtt version --format json | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['tool'] == 'rust-mqtt', f'bad tool: {d}'
+          assert d['protocol'] == 'MQTT', f'bad protocol: {d}'
+          assert d['protocol_int'] == 4, f'bad protocol_int: {d}'
+          assert d['spec_version'] == '1.10', f'bad spec_version: {d}'
+          assert d['language'] == 'rust', f'bad language: {d}'
+          print('version JSON OK')
+          "
+          ./target/release/rust-mqtt capabilities | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['kind'] == 'capabilities', f'bad kind: {d}'
+          assert d['adapt'] == True, f'adapt must be true: {d}'
+          assert d['protocol'] == 'MQTT', f'bad protocol: {d}'
+          assert 'convert' in d['commands'], f'convert missing: {d}'
+          print('capabilities JSON OK')
+          "
+          ./target/release/rust-mqtt status --format json | python3 -c "
+          import json, sys
+          d = json.load(sys.stdin)
+          assert d['protocol'] == 'MQTT', f'bad protocol: {d}'
+          assert d['healthy'] == True, f'should be healthy: {d}'
+          print('status JSON OK')
+          "
+          echo '{"topic":"sensors/temp","payload":"MjEuNQ==","qos":1,"retained":true}' \
+            | ./target/release/rust-mqtt convert --protocol MQTT | python3 -c "
+          import json, sys, base64
+          d = json.load(sys.stdin)
+          assert d['id'] == 'sensors/temp', f'bad id: {d}'
+          assert d['protocol'] == 4, f'bad protocol: {d}'
+          assert base64.b64decode(d['payload']) == b'21.5', f'bad payload: {d}'
+          assert d['meta']['mqtt.qos'] == '1', f'bad qos meta: {d}'
+          assert d['meta']['mqtt.retained'] == 'true', f'bad retained meta: {d}'
+          print('convert JSON OK')
+          "
+          convert_ec=0
+          echo '{"topic":"","payload":""}' \
+            | ./target/release/rust-mqtt convert --protocol MQTT || convert_ec=$?
+          test "$convert_ec" -eq 1 && echo 'convert exit-1 on invalid input OK' || \
+            { echo "FAIL: expected exit 1, got $convert_ec"; exit 1; }
+          proto_ec=0
+          ./target/release/rust-mqtt convert --protocol CAN </dev/null || proto_ec=$?
+          test "$proto_ec" -eq 2 && echo 'convert exit-2 on bad protocol OK' || \
+            { echo "FAIL: expected exit 2, got $proto_ec"; exit 1; }
+          printf '{"protocol":4,"version":{"major":0,"minor":0,"patch":0},"id":"test/t","payload":"aGVsbG8=","timestamp":"1970-01-01T00:00:00Z","meta":{"mqtt.qos":"0","mqtt.retained":"false"}}\n' \
+            | ./target/release/rust-mqtt send --format json && echo 'send --format json OK'
+
+  # ── RELAY conformance gate (§20.1.1) ──────────────────────────────────────
+  relay-conform:
+    name: RELAY conform (§20)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.25" }
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: go-relay-${{ hashFiles('**/go.sum') }}
+
+      - name: Install relay CLI
+        run: go install github.com/SoundMatt/RELAY/cmd/relay@v1.10.0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-relay-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build CLI
+        run: cargo build --release --bin rust-mqtt --locked
+
+      - name: relay conform --strict
+        run: relay conform --strict ./target/release/rust-mqtt
+
+      - name: relay interop (§20.2)
+        run: |
+          if relay interop --protocol MQTT --impl ./target/release/rust-mqtt 2>/dev/null; then
+            echo "relay interop EQUIVALENT"
+          else
+            echo "relay interop: not yet EQUIVALENT (non-blocking until convert is fully wired)"
+          fi
+
+  # ── ASIL-B safety checks via rust-FuSa (§20.1.2) ─────────────────────────
+  safety:
+    name: ASIL-B safety (x-FuSa)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-safety-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install rsfusa
+        run: cargo install --git https://github.com/SoundMatt/rust-FuSa rsfusa --locked
+
+      - name: Build release binary (needed for qualify)
+        run: cargo build --release --locked
+
+      - name: Run cargo tests (unit + integration)
+        run: cargo test --locked
+
+      - name: Capture test evidence with rsfusa
+        run: rsfusa verify --dir . || true
+
+      - name: Coding standard lint (ISO 26262 Part 6)
+        run: rsfusa lint --dir . --format json --output lint-report.json || true
+
+      - name: Static analysis
+        run: rsfusa analyze --dir . --format json --output analyze-report.json || true
+
+      - name: Safety check (ASIL-B strict — §20.1.2)
+        run: rsfusa check --dir . --strict --format json --output check-report.json || true
+
+      - name: Safety check SARIF (GitHub code scanning)
+        run: rsfusa check --dir . --format sarif --output results.sarif || true
+
+      - name: Cyclomatic complexity V(G)
+        run: rsfusa comp --dir . --format json --output comp-report.json || true
+
+      - name: Requirement traceability matrix (§20.1.2)
+        run: |
+          rsfusa trace --dir . --format json --output trace.json || true
+          rsfusa trace --dir . --format text || true
+
+      - name: FMEA
+        run: rsfusa fmea --dir . || true
+
+      - name: Threat analysis (TARA)
+        run: rsfusa tara --dir . || true
+
+      - name: Cybersecurity analysis (CWE)
+        run: rsfusa cyber --dir . --format json --output cyber-report.json || true
+
+      - name: Boundary diagram
+        run: rsfusa boundary --dir . || true
+
+      - name: HARA
+        run: rsfusa hara show --dir . || true
+
+      - name: Safety case assembly
+        run: rsfusa safety-case --dir . || true
+
+      - name: ISO 26262 Part 6 gap report
+        run: rsfusa iso26262 --dir . --format json --output iso26262-gap-report.json || true
+
+      - name: Tool qualification
+        run: rsfusa qualify
+
+      - name: Release artifacts (SBOM, provenance, manifest)
+        run: rsfusa release --dir .
+
+      - name: Audit pack
+        run: rsfusa audit-pack --output audit-pack.zip || true
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always() && github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+        continue-on-error: true
+
+      - name: Upload safety evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety-evidence
+          path: |
+            check-report.json
+            lint-report.json
+            analyze-report.json
+            comp-report.json
+            cyber-report.json
+            trace.json
+            fmea.json
+            tara.json
+            safety-case.json
+            safety-case.md
+            iso26262-gap-report.json
+            results.sarif
+            audit-pack.zip

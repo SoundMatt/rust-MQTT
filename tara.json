@@ -1,0 +1,63 @@
+{
+  "format": "x-FuSa TARA v1",
+  "generated_at": "2026-06-19T00:00:00Z",
+  "module": "github.com/SoundMatt/rust-MQTT",
+  "standard": "ISO 21434",
+  "threats": [
+    {
+      "id": "THREAT-001",
+      "title": "Malformed MQTT packet injection",
+      "asset": "TCP connection parser (v3::packet)",
+      "attack_vector": "Network",
+      "attack_complexity": "Low",
+      "impact": "Broker crash or incorrect message routing",
+      "likelihood": "medium",
+      "risk": "high",
+      "mitigation": "All packet parsers use length-checked slicing; malformed packets cause early return, not panic"
+    },
+    {
+      "id": "THREAT-002",
+      "title": "Topic wildcard injection",
+      "asset": "match_topic function",
+      "attack_vector": "API",
+      "attack_complexity": "Low",
+      "impact": "Subscriber receives unintended messages",
+      "likelihood": "medium",
+      "risk": "medium",
+      "mitigation": "match_topic enforces §4.7 system-topic protection; '$' topics not matched by bare '#' or '+'"
+    },
+    {
+      "id": "THREAT-003",
+      "title": "Channel overflow via high-rate publish",
+      "asset": "MockClient / v3::Client subscription channel",
+      "attack_vector": "API",
+      "attack_complexity": "Low",
+      "impact": "Message loss or back-pressure blocking",
+      "likelihood": "medium",
+      "risk": "medium",
+      "mitigation": "BackPressurePolicy (DropNewest/DropOldest/Block) configured per subscription; default DropNewest prevents blocking"
+    },
+    {
+      "id": "THREAT-004",
+      "title": "CONNACK spoofing (return code 0 on rejection)",
+      "asset": "v3::Client CONNACK handling",
+      "attack_vector": "Network",
+      "attack_complexity": "High",
+      "impact": "Client connects to malicious broker",
+      "likelihood": "low",
+      "risk": "medium",
+      "mitigation": "CONNACK return code checked; ConnectionRefused returned for non-zero codes. TLS feature available for transport security."
+    },
+    {
+      "id": "THREAT-005",
+      "title": "Payload size exhaustion",
+      "asset": "Broker message routing",
+      "attack_vector": "Network",
+      "attack_complexity": "Low",
+      "impact": "Memory exhaustion",
+      "likelihood": "medium",
+      "risk": "medium",
+      "mitigation": "Maximum payload controlled by channel capacity; PayloadTooLarge sentinel defined for upper-layer enforcement"
+    }
+  ]
+}

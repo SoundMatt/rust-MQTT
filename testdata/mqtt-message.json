@@ -1,0 +1,26 @@
+{
+    "name": "mqtt-message",
+    "description": "MQTT QoS 1 retained message",
+    "type": "mqtt.Message",
+    "value": {
+        "topic": "sensors/temp",
+        "payload": "MjEuNQ==",
+        "qos": 1,
+        "retained": true
+    },
+    "message": {
+        "protocol": 4,
+        "version": {
+            "major": 0,
+            "minor": 0,
+            "patch": 0
+        },
+        "id": "sensors/temp",
+        "payload": "MjEuNQ==",
+        "timestamp": "1970-01-01T00:00:00Z",
+        "meta": {
+            "mqtt.qos": "1",
+            "mqtt.retained": "true"
+        }
+    }
+}

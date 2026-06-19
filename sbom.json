@@ -1,0 +1,31 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "spdxVersion": "SPDX-2.3",
+  "creationInfo": {
+    "created": "2026-06-19T00:00:00Z",
+    "creators": ["Tool: rust-mqtt-sbom/1.0"]
+  },
+  "name": "rust-MQTT SBOM",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://github.com/SoundMatt/rust-MQTT/sbom-1.0.0",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-rust-mqtt",
+      "name": "rust-mqtt",
+      "versionInfo": "1.0.0",
+      "downloadLocation": "https://github.com/SoundMatt/rust-MQTT",
+      "licenseConcluded": "MPL-2.0",
+      "licenseDeclared": "MPL-2.0",
+      "supplier": "Organization: SoundMatt"
+    },
+    {"SPDXID": "SPDXRef-tokio", "name": "tokio", "versionInfo": "1.x", "downloadLocation": "https://crates.io/crates/tokio", "licenseConcluded": "MIT", "licenseDeclared": "MIT"},
+    {"SPDXID": "SPDXRef-serde", "name": "serde", "versionInfo": "1.x", "downloadLocation": "https://crates.io/crates/serde", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-serde-json", "name": "serde_json", "versionInfo": "1.x", "downloadLocation": "https://crates.io/crates/serde_json", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-thiserror", "name": "thiserror", "versionInfo": "1.x", "downloadLocation": "https://crates.io/crates/thiserror", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-chrono", "name": "chrono", "versionInfo": "0.4.x", "downloadLocation": "https://crates.io/crates/chrono", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-clap", "name": "clap", "versionInfo": "4.x", "downloadLocation": "https://crates.io/crates/clap", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-base64", "name": "base64", "versionInfo": "0.22.x", "downloadLocation": "https://crates.io/crates/base64", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"},
+    {"SPDXID": "SPDXRef-bytes", "name": "bytes", "versionInfo": "1.x", "downloadLocation": "https://crates.io/crates/bytes", "licenseConcluded": "MIT", "licenseDeclared": "MIT"},
+    {"SPDXID": "SPDXRef-async-trait", "name": "async-trait", "versionInfo": "0.1.x", "downloadLocation": "https://crates.io/crates/async-trait", "licenseConcluded": "MIT OR Apache-2.0", "licenseDeclared": "MIT OR Apache-2.0"}
+  ]
+}

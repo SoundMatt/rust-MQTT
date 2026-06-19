@@ -1,0 +1,417 @@
+// Copyright (c) 2026 Matt Jones. All rights reserved.
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+//! Minimal embedded TCP MQTT v3.1.1 broker.
+//!
+//! For integration testing. Not intended for production use.
+//! Binds on an OS-assigned port; use `addr()` to retrieve it.
+//!
+//! # Example
+//! ```rust,no_run
+//! use rust_mqtt::broker::Broker;
+//! use rust_mqtt::v3::{Client, ConnectOptions};
+//! use rust_mqtt::Client as MqttClient;
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let broker = Broker::start("127.0.0.1:0").await.unwrap();
+//!     let addr = broker.addr();
+//!     let opts = ConnectOptions::new(addr.to_string());
+//!     let client = Client::connect(opts).await.unwrap();
+//!     client.close().await.unwrap();
+//!     broker.close().await;
+//! }
+//! ```
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, Mutex};
+
+use crate::message::{Message, QoS};
+use crate::topic::match_topic;
+
+// ---------------------------------------------------------------------------
+// BrokerState
+// ---------------------------------------------------------------------------
+
+struct Subscription {
+    filter: String,
+    tx: mpsc::Sender<Vec<u8>>,
+}
+
+struct BrokerState {
+    subs: Mutex<HashMap<u64, Subscription>>,
+    retained: Mutex<HashMap<String, Message>>,
+    next_id: AtomicU64,
+    closed: AtomicBool,
+}
+
+impl BrokerState {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            subs: Mutex::new(HashMap::new()),
+            retained: Mutex::new(HashMap::new()),
+            next_id: AtomicU64::new(1),
+            closed: AtomicBool::new(false),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Broker
+// ---------------------------------------------------------------------------
+
+/// Minimal embedded MQTT v3.1.1 broker.
+//fusa:req REQ-BROKER-001
+//fusa:req REQ-BROKER-002
+//fusa:req REQ-BROKER-003
+pub struct Broker {
+    addr: SocketAddr,
+    state: Arc<BrokerState>,
+    shutdown_tx: mpsc::Sender<()>,
+}
+
+impl Broker {
+    /// Start the broker listening on `addr`. Use `"127.0.0.1:0"` for an
+    /// OS-assigned port.
+    pub async fn start(addr: &str) -> Result<Self, std::io::Error> {
+        let listener = TcpListener::bind(addr).await?;
+        let bound_addr = listener.local_addr()?;
+        let state = BrokerState::new();
+        let state_clone = state.clone();
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    accept = listener.accept() => {
+                        match accept {
+                            Ok((stream, _peer)) => {
+                                let s = state_clone.clone();
+                                tokio::spawn(handle_client(stream, s));
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                    _ = shutdown_rx.recv() => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            addr: bound_addr,
+            state,
+            shutdown_tx,
+        })
+    }
+
+    /// The address the broker is listening on.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+
+    /// Shut down the broker.
+    pub async fn close(self) {
+        let _ = self.shutdown_tx.send(()).await;
+        self.state.closed.store(true, Ordering::SeqCst);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-client handler
+// ---------------------------------------------------------------------------
+
+async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
+    let (mut reader, mut writer) = stream.into_split();
+
+    // Expect CONNECT packet
+    let first = match reader.read_u8().await {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    if first >> 4 != 1 {
+        return;
+    } // not CONNECT
+
+    let rem_len = match read_varint_sync(&mut reader).await {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let mut buf = vec![0u8; rem_len];
+    if rem_len > 0 && reader.read_exact(&mut buf).await.is_err() {
+        return;
+    }
+
+    // Send CONNACK (return code 0)
+    if writer.write_all(&[0x20, 0x02, 0x00, 0x00]).await.is_err() {
+        return;
+    }
+
+    // Allocate a client-specific write channel
+    let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(256);
+
+    // Per-session subscription IDs
+    let session_sub_ids: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+    tokio::spawn(async move {
+        while let Some(pkt) = write_rx.recv().await {
+            if writer.write_all(&pkt).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Reader loop
+    while let Ok(byte) = reader.read_u8().await {
+        let ptype = byte >> 4;
+        let flags = byte & 0x0F;
+
+        let rem_len = match read_varint_sync(&mut reader).await {
+            Ok(v) => v,
+            Err(_) => break,
+        };
+        let mut body = vec![0u8; rem_len];
+        if rem_len > 0 && reader.read_exact(&mut body).await.is_err() {
+            break;
+        }
+
+        match ptype {
+            3 => {
+                // PUBLISH
+                let qos_bits = (flags >> 1) & 0x03;
+                let retained_flag = flags & 0x01 != 0;
+                if body.len() < 2 {
+                    continue;
+                }
+                let topic_len = u16::from_be_bytes([body[0], body[1]]) as usize;
+                if body.len() < 2 + topic_len {
+                    continue;
+                }
+                let topic = match std::str::from_utf8(&body[2..2 + topic_len]) {
+                    Ok(s) => s.to_owned(),
+                    Err(_) => continue,
+                };
+                let mut payload_off = 2 + topic_len;
+                let mut pid = 0u16;
+                if qos_bits > 0 && body.len() >= payload_off + 2 {
+                    pid = u16::from_be_bytes([body[payload_off], body[payload_off + 1]]);
+                    payload_off += 2;
+                }
+                let payload = body[payload_off..].to_vec();
+                let qos = QoS::try_from(qos_bits).unwrap_or(QoS::AtMostOnce);
+
+                if retained_flag {
+                    let msg = Message {
+                        topic: topic.clone(),
+                        payload: payload.clone(),
+                        qos,
+                        retained: true,
+                        ..Default::default()
+                    };
+                    state.retained.lock().await.insert(topic.clone(), msg);
+                }
+
+                // Broadcast to matching subscribers
+                let pub_pkt = build_publish_pkt(&topic, &payload, qos, false, None);
+                let subs = state.subs.lock().await;
+                for sub in subs.values() {
+                    if match_topic(&sub.filter, &topic) {
+                        let _ = sub.tx.try_send(pub_pkt.clone());
+                    }
+                }
+
+                // PUBACK for QoS 1
+                if qos_bits == 1 {
+                    let _ = write_tx.try_send(vec![0x40, 0x02, (pid >> 8) as u8, pid as u8]);
+                }
+            }
+            8 => {
+                // SUBSCRIBE
+                if body.len() < 4 {
+                    continue;
+                }
+                let pid = u16::from_be_bytes([body[0], body[1]]);
+                let filter_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+                if body.len() < 4 + filter_len {
+                    continue;
+                }
+                let filter = match std::str::from_utf8(&body[4..4 + filter_len]) {
+                    Ok(s) => s.to_owned(),
+                    Err(_) => continue,
+                };
+                let requested_qos = if body.len() > 4 + filter_len {
+                    body[4 + filter_len]
+                } else {
+                    0
+                };
+
+                let id = state.next_id.fetch_add(1, Ordering::SeqCst);
+                let write_tx_clone = write_tx.clone();
+                state.subs.lock().await.insert(
+                    id,
+                    Subscription {
+                        filter: filter.clone(),
+                        tx: write_tx_clone,
+                    },
+                );
+                session_sub_ids.lock().await.push(id);
+
+                // Deliver retained messages
+                let retained = state.retained.lock().await.clone();
+                for (topic, msg) in &retained {
+                    if match_topic(&filter, topic) {
+                        let pkt = build_publish_pkt(&msg.topic, &msg.payload, msg.qos, true, None);
+                        let _ = write_tx.try_send(pkt);
+                    }
+                }
+
+                // SUBACK
+                let _ =
+                    write_tx.try_send(vec![0x90, 0x03, (pid >> 8) as u8, pid as u8, requested_qos]);
+            }
+            10 => {
+                // UNSUBSCRIBE
+                if body.len() < 4 {
+                    continue;
+                }
+                let pid = u16::from_be_bytes([body[0], body[1]]);
+                let filter_len = u16::from_be_bytes([body[2], body[3]]) as usize;
+                if body.len() < 4 + filter_len {
+                    continue;
+                }
+                let filter = match std::str::from_utf8(&body[4..4 + filter_len]) {
+                    Ok(s) => s.to_owned(),
+                    Err(_) => continue,
+                };
+                let mut subs = state.subs.lock().await;
+                subs.retain(|_, sub| sub.filter != filter);
+                let _ = write_tx.try_send(vec![0xB0, 0x02, (pid >> 8) as u8, pid as u8]);
+            }
+            12 => {
+                // PINGREQ
+                let _ = write_tx.try_send(vec![0xD0, 0x00]);
+            }
+            14 => break, // DISCONNECT
+            _ => {}
+        }
+    }
+
+    // Clean up subscriptions for this session
+    let ids = session_sub_ids.lock().await.clone();
+    let mut subs = state.subs.lock().await;
+    for id in ids {
+        subs.remove(&id);
+    }
+}
+
+async fn read_varint_sync(r: &mut tokio::net::tcp::OwnedReadHalf) -> Result<usize, ()> {
+    let mut result = 0usize;
+    let mut shift = 0;
+    loop {
+        let byte = r.read_u8().await.map_err(|_| ())?;
+        result |= ((byte & 0x7F) as usize) << shift;
+        shift += 7;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        if shift > 28 {
+            return Err(());
+        }
+    }
+    Ok(result)
+}
+
+fn build_publish_pkt(
+    topic: &str,
+    payload: &[u8],
+    qos: QoS,
+    retained: bool,
+    pid: Option<u16>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    let t = topic.as_bytes();
+    body.push((t.len() >> 8) as u8);
+    body.push(t.len() as u8);
+    body.extend_from_slice(t);
+    if let Some(p) = pid {
+        body.push((p >> 8) as u8);
+        body.push(p as u8);
+    }
+    body.extend_from_slice(payload);
+
+    let flags: u8 = ((qos as u8) << 1) | (retained as u8);
+    let mut out = vec![(3 << 4) | flags];
+    let mut rem = body.len();
+    loop {
+        let mut d = (rem % 128) as u8;
+        rem /= 128;
+        if rem > 0 {
+            d |= 0x80;
+        }
+        out.push(d);
+        if rem == 0 {
+            break;
+        }
+    }
+    out.extend_from_slice(&body);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::{Client, SubscriberConfig};
+    use crate::message::QoS;
+    use crate::v3::{Client as V3Client, ConnectOptions};
+    use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn broker_start_and_connect() {
+        let broker = Broker::start("127.0.0.1:0").await.unwrap();
+        let addr = broker.addr();
+        let opts = ConnectOptions::new(addr.to_string());
+        let client = V3Client::connect(opts).await.unwrap();
+        client.close().await.unwrap();
+        broker.close().await;
+    }
+
+    #[tokio::test]
+    async fn broker_pubsub_roundtrip() {
+        let broker = Broker::start("127.0.0.1:0").await.unwrap();
+        let addr = broker.addr();
+
+        let c1 = V3Client::connect(ConnectOptions::new(addr.to_string()).client_id("sub"))
+            .await
+            .unwrap();
+        let c2 = V3Client::connect(ConnectOptions::new(addr.to_string()).client_id("pub"))
+            .await
+            .unwrap();
+
+        let mut sub = c1
+            .subscribe("test/#", QoS::AtMostOnce, SubscriberConfig::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        c2.publish("test/topic", QoS::AtMostOnce, b"hello".to_vec())
+            .await
+            .unwrap();
+
+        let msg = timeout(Duration::from_secs(2), sub.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(msg.topic, "test/topic");
+        assert_eq!(msg.payload, b"hello");
+
+        c1.close().await.unwrap();
+        c2.close().await.unwrap();
+        broker.close().await;
+    }
+}

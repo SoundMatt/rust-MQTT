@@ -1,0 +1,79 @@
+{
+  "format": "x-FuSa dFMEA v1",
+  "generated_at": "2026-06-19T00:00:00Z",
+  "module": "github.com/SoundMatt/rust-MQTT",
+  "entries": [
+    {
+      "component": "mock",
+      "function": "publish",
+      "failure_modes": ["Message not delivered to matching subscribers", "Retained message not stored"],
+      "effects": ["Subscriber misses message", "Retained message lost"],
+      "severity": "high",
+      "detection_control": "unit tests (mock::tests::basic_pubsub, mock::tests::retained_delivered_on_subscribe)"
+    },
+    {
+      "component": "mock",
+      "function": "subscribe",
+      "failure_modes": ["TopicEmpty error not returned", "Closed error not returned"],
+      "effects": ["Silent subscription failure", "Resource leak"],
+      "severity": "high",
+      "detection_control": "unit tests (mock::tests::subscribe_empty_topic_error, mock::tests::closed_error)"
+    },
+    {
+      "component": "mock",
+      "function": "close",
+      "failure_modes": ["Resources not released", "Operations not returning Closed after close"],
+      "effects": ["Resource leak", "Silent failure propagated to caller"],
+      "severity": "high",
+      "detection_control": "unit tests (mock::tests::close_idempotent, mock::tests::closed_error)"
+    },
+    {
+      "component": "topic",
+      "function": "match_topic",
+      "failure_modes": ["System topic incorrectly matched by '#' wildcard", "'+' wildcard matches multi-level topic"],
+      "effects": ["System messages delivered to unintended subscribers", "Incorrect routing"],
+      "severity": "high",
+      "detection_control": "unit tests (topic::tests::*)"
+    },
+    {
+      "component": "adapt",
+      "function": "adapt",
+      "failure_modes": ["Protocol not set to MQTT in relay::Message", "QoS meta key incorrect"],
+      "effects": ["RELAY interop routing failure", "Message delivered at wrong QoS"],
+      "severity": "high",
+      "detection_control": "unit tests (adapt::tests::*), relay_conformance tests"
+    },
+    {
+      "component": "v3",
+      "function": "connect",
+      "failure_modes": ["CONNACK not checked for error code", "TCP timeout not applied"],
+      "effects": ["Connection to refusing broker succeeds silently", "Infinite connect hang"],
+      "severity": "high",
+      "detection_control": "unit tests (v3::packet::*), broker integration tests"
+    },
+    {
+      "component": "broker",
+      "function": "start",
+      "failure_modes": ["Port not freed on close", "Retained messages not delivered to late subscribers"],
+      "effects": ["Port exhaustion in test suite", "Subscriber misses retained state"],
+      "severity": "medium",
+      "detection_control": "integration tests (broker::tests::*)"
+    },
+    {
+      "component": "message",
+      "function": "to_relay_message",
+      "failure_modes": ["mqtt.qos meta key missing or wrong value", "Payload bytes corrupted"],
+      "effects": ["RELAY crossbar QoS mismatch", "Data corruption"],
+      "severity": "high",
+      "detection_control": "relay_conformance::vector_to_relay_message"
+    },
+    {
+      "component": "message",
+      "function": "from_relay_message",
+      "failure_modes": ["QoS not restored from meta", "Retained flag not restored"],
+      "effects": ["Wrong QoS on published message", "Retained semantics lost"],
+      "severity": "high",
+      "detection_control": "relay_conformance::vector_from_relay_message_roundtrip"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+/target/
+Cargo.lock
+*.sarif
+*.zip
+lint-report.json
+analyze-report.json
+check-report.json
+comp-report.json
+cyber-report.json
+trace.json
+qualify-report.json
+iso26262-gap-report.json
+safety-case.md
