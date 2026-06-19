@@ -58,7 +58,7 @@ jobs:
           assert d['tool'] == 'rust-mqtt', f'bad tool: {d}'
           assert d['protocol'] == 'MQTT', f'bad protocol: {d}'
           assert d['protocol_int'] == 4, f'bad protocol_int: {d}'
-          assert d['spec_version'] == '1.10', f'bad spec_version: {d}'
+          assert d['spec_version'] == '1.11', f'bad spec_version: {d}'
           assert d['language'] == 'rust', f'bad language: {d}'
           print('version JSON OK')
           "
@@ -118,7 +118,7 @@ jobs:
           key: go-relay-${{ hashFiles('**/go.sum') }}
 
       - name: Install relay CLI
-        run: go install github.com/SoundMatt/RELAY/cmd/relay@v1.10.0
+        run: go install github.com/SoundMatt/RELAY/cmd/relay@v1.11.0
 
       - uses: dtolnay/rust-toolchain@stable
 

@@ -16,7 +16,7 @@
     {
       "id": "REQ-MQTT-002",
       "title": "Spec version",
-      "text": "The system shall expose SPEC_VERSION = \"1.10\" bound to the RELAY spec version so the two cannot drift.",
+      "text": "The system shall expose SPEC_VERSION = \"1.11\" bound to the RELAY spec version so the two cannot drift.",
       "category": "functional",
       "criticality": "high",
       "asil": "ASIL-B",
@@ -865,7 +865,7 @@
     {
       "id": "REQ-RELAY-001",
       "title": "RELAY spec version",
-      "text": "The system shall expose SPEC_VERSION = \"1.10\" matching the RELAY spec.",
+      "text": "The system shall expose SPEC_VERSION = \"1.11\" matching the RELAY spec.",
       "category": "functional",
       "criticality": "high",
       "asil": "ASIL-B",

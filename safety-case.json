@@ -68,7 +68,7 @@
     },
     {
       "id": "EV-010",
-      "description": "RELAY spec v1.10 conformance \u2014 relay conform --strict PASS",
+      "description": "RELAY spec v1.11 conformance \u2014 relay conform --strict PASS",
       "file": "CI relay-conform job",
       "status": "present"
     },
@@ -225,7 +225,7 @@
     },
     {
       "id": "SC-007",
-      "claim": "G7: rust-MQTT is conformant with RELAY spec v1.10 (\u00a720)",
+      "claim": "G7: rust-MQTT is conformant with RELAY spec v1.11 (\u00a720)",
       "strategy": "Argument by continuous CI gate: relay conform --strict + relay interop pass on every merge",
       "evidence": [
         "EV-010"
