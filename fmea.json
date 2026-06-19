@@ -1,79 +1,395 @@
 {
-  "format": "x-FuSa dFMEA v1",
+  "format": "rust-fusa-fmea-v2",
   "generated_at": "2026-06-19T00:00:00Z",
-  "module": "github.com/SoundMatt/rust-MQTT",
+  "module": "rust-MQTT",
+  "version": "1.0.0",
+  "standard": "ISO 26262:2018 Part 8 \u00a77, IEC 61508-3:2010 Annex B, AEC-Q100 FMEA",
+  "asil": "ASIL-B",
+  "note": "RPN = Severity(1-10) x Occurrence(1-10) x Detection(1-10). ASIL from ISO 26262 Part 3 HARA.",
   "entries": [
     {
+      "id": "FMEA-001",
       "component": "mock",
       "function": "publish",
-      "failure_modes": ["Message not delivered to matching subscribers", "Retained message not stored"],
-      "effects": ["Subscriber misses message", "Retained message lost"],
-      "severity": "high",
-      "detection_control": "unit tests (mock::tests::basic_pubsub, mock::tests::retained_delivered_on_subscribe)"
+      "failure_modes": [
+        "Message not delivered to matching subscribers",
+        "Duplicate delivery to same subscriber"
+      ],
+      "local_effect": "Subscriber misses or double-processes a message",
+      "system_effect": "Vehicle signal update lost or duplicated; incorrect actuator state",
+      "severity": 8,
+      "severity_rationale": "Lost signal in a safety loop can delay hazard detection",
+      "occurrence": 3,
+      "occurrence_rationale": "Wildcard matching is well-tested; regression unlikely",
+      "detection": 2,
+      "detection_rationale": "12 unit tests cover all delivery paths",
+      "rpn": 48,
+      "asil": "ASIL-B",
+      "mitigation": "Full \u00a74.7 wildcard test suite; peer-shared broker test; CI gate",
+      "reqs": [
+        "REQ-PUB-001",
+        "REQ-PUB-002",
+        "REQ-MOCK-001"
+      ]
     },
     {
+      "id": "FMEA-002",
+      "component": "mock",
+      "function": "publish_retained",
+      "failure_modes": [
+        "Retained message not stored",
+        "Retained message not delivered to new subscriber"
+      ],
+      "local_effect": "New subscriber misses last-known-good value",
+      "system_effect": "Stale or absent initial state in vehicle subsystem",
+      "severity": 7,
+      "severity_rationale": "Initial-state miss may cause incorrect startup action",
+      "occurrence": 2,
+      "occurrence_rationale": "Retained logic is simple; coverage is good",
+      "detection": 2,
+      "detection_rationale": "Dedicated retained_delivery integration test",
+      "rpn": 28,
+      "asil": "ASIL-B",
+      "mitigation": "mock_integration::mock_retained_delivery; stored in Mutex map before broadcast",
+      "reqs": [
+        "REQ-PUB-003",
+        "REQ-PUB-004",
+        "REQ-MOCK-004",
+        "REQ-HARA-003"
+      ]
+    },
+    {
+      "id": "FMEA-003",
       "component": "mock",
       "function": "subscribe",
-      "failure_modes": ["TopicEmpty error not returned", "Closed error not returned"],
-      "effects": ["Silent subscription failure", "Resource leak"],
-      "severity": "high",
-      "detection_control": "unit tests (mock::tests::subscribe_empty_topic_error, mock::tests::closed_error)"
+      "failure_modes": [
+        "Subscribe after close does not return error",
+        "Back-pressure policy not applied"
+      ],
+      "local_effect": "Caller may block indefinitely or lose messages silently",
+      "system_effect": "Thread or async task deadlock; undetected message loss",
+      "severity": 7,
+      "severity_rationale": "Deadlock in async task affects system responsiveness",
+      "occurrence": 2,
+      "occurrence_rationale": "AtomicBool closed check on every call",
+      "detection": 2,
+      "detection_rationale": "mock_closed_errors + back_pressure tests",
+      "rpn": 28,
+      "asil": "ASIL-B",
+      "mitigation": "Closed state checked atomically; back-pressure applied per policy in SubRecord::push",
+      "reqs": [
+        "REQ-MOCK-003",
+        "REQ-SUB-006",
+        "REQ-SUB-007",
+        "REQ-SUB-008",
+        "REQ-SAFE-003",
+        "REQ-SAFE-004"
+      ]
     },
     {
+      "id": "FMEA-004",
       "component": "mock",
       "function": "close",
-      "failure_modes": ["Resources not released", "Operations not returning Closed after close"],
-      "effects": ["Resource leak", "Silent failure propagated to caller"],
-      "severity": "high",
-      "detection_control": "unit tests (mock::tests::close_idempotent, mock::tests::closed_error)"
+      "failure_modes": [
+        "Close not atomic \u2014 concurrent publish racing close returns neither Ok nor Err"
+      ],
+      "local_effect": "Undefined state: partially closed broker",
+      "system_effect": "Possible panic or data race in vehicle software",
+      "severity": 9,
+      "severity_rationale": "Panic in safety-critical task is catastrophic",
+      "occurrence": 2,
+      "occurrence_rationale": "AtomicBool with Ordering::SeqCst prevents race",
+      "detection": 3,
+      "detection_rationale": "concurrent_close_safe test; no panic under stress",
+      "rpn": 54,
+      "asil": "ASIL-B",
+      "mitigation": "AtomicBool::swap with SeqCst; no unsafe; all senders dropped atomically",
+      "reqs": [
+        "REQ-SAFE-004",
+        "REQ-SAFE-007",
+        "REQ-CONN-008"
+      ]
     },
     {
+      "id": "FMEA-005",
       "component": "topic",
       "function": "match_topic",
-      "failure_modes": ["System topic incorrectly matched by '#' wildcard", "'+' wildcard matches multi-level topic"],
-      "effects": ["System messages delivered to unintended subscribers", "Incorrect routing"],
-      "severity": "high",
-      "detection_control": "unit tests (topic::tests::*)"
+      "failure_modes": [
+        "False positive match \u2014 message delivered to wrong subscriber",
+        "False negative \u2014 message not delivered to intended subscriber",
+        "$SYS topic matched by bare # or +"
+      ],
+      "local_effect": "Incorrect message routing",
+      "system_effect": "Wrong vehicle subsystem receives signal; system-topic flood to user subs",
+      "severity": 9,
+      "severity_rationale": "Wrong routing of brake or throttle signals is safety-critical",
+      "occurrence": 2,
+      "occurrence_rationale": "Logic is a direct \u00a74.7 port; 10+ edge case tests",
+      "detection": 1,
+      "detection_rationale": "20+ unit and integration tests covering all \u00a74.7 cases",
+      "rpn": 18,
+      "asil": "ASIL-B",
+      "mitigation": "10 unit tests in topic module, match_topic_conformance relay vector, system_topic_no_hash integration test",
+      "reqs": [
+        "REQ-WILD-001",
+        "REQ-WILD-002",
+        "REQ-CYBER-004",
+        "REQ-HARA-004"
+      ]
     },
     {
+      "id": "FMEA-006",
       "component": "adapt",
-      "function": "adapt",
-      "failure_modes": ["Protocol not set to MQTT in relay::Message", "QoS meta key incorrect"],
-      "effects": ["RELAY interop routing failure", "Message delivered at wrong QoS"],
-      "severity": "high",
-      "detection_control": "unit tests (adapt::tests::*), relay_conformance tests"
+      "function": "adapt / NodeAdapter::send",
+      "failure_modes": [
+        "relay.Message not converted to mqtt.Message correctly",
+        "Back-pressure not applied in forwarding task"
+      ],
+      "local_effect": "Incorrect QoS or topic on delivered message",
+      "system_effect": "Signal lost or misrouted across RELAY crossbar",
+      "severity": 8,
+      "severity_rationale": "Cross-protocol signal loss in vehicle bus",
+      "occurrence": 2,
+      "occurrence_rationale": "from_message tested against golden vector",
+      "detection": 2,
+      "detection_rationale": "adapt_node_send_and_subscribe + relay interop CI",
+      "rpn": 32,
+      "asil": "ASIL-B",
+      "mitigation": "Golden-vector round-trip test; relay interop CI job; meta key mapping tested",
+      "reqs": [
+        "REQ-RELAY-007",
+        "REQ-RELAY-008",
+        "REQ-RELAY-009",
+        "REQ-RELAY-020"
+      ]
     },
     {
+      "id": "FMEA-007",
       "component": "v3",
       "function": "connect",
-      "failure_modes": ["CONNACK not checked for error code", "TCP timeout not applied"],
-      "effects": ["Connection to refusing broker succeeds silently", "Infinite connect hang"],
-      "severity": "high",
-      "detection_control": "unit tests (v3::packet::*), broker integration tests"
+      "failure_modes": [
+        "CONNACK not validated \u2014 non-zero return code accepted as success",
+        "Connect timeout not enforced"
+      ],
+      "local_effect": "Client operates in disconnected state believing it is connected",
+      "system_effect": "All published messages silently lost",
+      "severity": 9,
+      "severity_rationale": "Silent loss of all messages \u2014 catastrophic",
+      "occurrence": 2,
+      "occurrence_rationale": "CONNACK validated in run_read_loop; timeout via tokio::time",
+      "detection": 3,
+      "detection_rationale": "Broker integration test verifies connect; timeout test",
+      "rpn": 54,
+      "asil": "ASIL-B",
+      "mitigation": "CONNACK return code checked; non-zero returns ConnectionRefused(code); connect_timeout enforced",
+      "reqs": [
+        "REQ-CONN-009",
+        "REQ-ERR-003",
+        "REQ-ERR-005"
+      ]
     },
     {
+      "id": "FMEA-008",
+      "component": "v3",
+      "function": "packet.rs / build_publish",
+      "failure_modes": [
+        "Oversized payload not rejected \u2014 varint encoding overflows",
+        "Malformed packet sent \u2014 parsing error at broker"
+      ],
+      "local_effect": "Broker disconnects; all subsequent messages lost",
+      "system_effect": "Permanent communication blackout for client",
+      "severity": 8,
+      "severity_rationale": "Loss of all MQTT communication",
+      "occurrence": 2,
+      "occurrence_rationale": "Max payload check in publish path",
+      "detection": 2,
+      "detection_rationale": "Packet-level unit tests; pub_oversized_payload_rejected",
+      "rpn": 32,
+      "asil": "ASIL-B",
+      "mitigation": "Payload length checked against MQTT max; varint encoding tested; 6 packet unit tests",
+      "reqs": [
+        "REQ-SAFE-005",
+        "REQ-CYBER-002",
+        "REQ-ERR-001"
+      ]
+    },
+    {
+      "id": "FMEA-009",
+      "component": "v3",
+      "function": "packet.rs / parse inbound",
+      "failure_modes": [
+        "Inbound packet with malicious length fields causes OOB read",
+        "Truncated packet causes panic on slice index"
+      ],
+      "local_effect": "Panic or incorrect data consumed",
+      "system_effect": "Process crash; potential information disclosure",
+      "severity": 9,
+      "severity_rationale": "Crash in vehicle communication daemon",
+      "occurrence": 2,
+      "occurrence_rationale": "All slices are bounds-checked; no unsafe",
+      "detection": 2,
+      "detection_rationale": "truncated_topic_rejected, truncated_payload_rejected tests; cargo audit",
+      "rpn": 36,
+      "asil": "ASIL-B",
+      "mitigation": "No unsafe; all slice accesses use checked operations; malformed \u2192 Protocol error",
+      "reqs": [
+        "REQ-CYBER-001",
+        "REQ-CYBER-002",
+        "REQ-ERR-004",
+        "REQ-SAFE-001"
+      ]
+    },
+    {
+      "id": "FMEA-010",
       "component": "broker",
-      "function": "start",
-      "failure_modes": ["Port not freed on close", "Retained messages not delivered to late subscribers"],
-      "effects": ["Port exhaustion in test suite", "Subscriber misses retained state"],
-      "severity": "medium",
-      "detection_control": "integration tests (broker::tests::*)"
+      "function": "handle_client",
+      "failure_modes": [
+        "Broker panics on malformed packet from test client",
+        "Retained message map grows without bound"
+      ],
+      "local_effect": "Integration test broker crashes; test hangs",
+      "system_effect": "No system effect \u2014 broker is test-only; not deployed",
+      "severity": 3,
+      "severity_rationale": "Test-only component; no safety impact",
+      "occurrence": 3,
+      "occurrence_rationale": "Broker only used in integration tests",
+      "detection": 4,
+      "detection_rationale": "broker_connect and broker_pubsub tests",
+      "rpn": 36,
+      "asil": "QM",
+      "mitigation": "Test broker; errors logged and connection dropped; retained map bounded by test scenarios",
+      "reqs": [
+        "REQ-BROKER-001",
+        "REQ-BROKER-002",
+        "REQ-BROKER-003"
+      ]
     },
     {
+      "id": "FMEA-011",
       "component": "message",
       "function": "to_relay_message",
-      "failure_modes": ["mqtt.qos meta key missing or wrong value", "Payload bytes corrupted"],
-      "effects": ["RELAY crossbar QoS mismatch", "Data corruption"],
-      "severity": "high",
-      "detection_control": "relay_conformance::vector_to_relay_message"
+      "failure_modes": [
+        "mqtt.qos meta key missing or wrong value",
+        "mqtt.retained meta key missing"
+      ],
+      "local_effect": "RELAY adapter uses wrong QoS; retained state lost across RELAY layer",
+      "system_effect": "QoS downgrade on safety-critical message",
+      "severity": 7,
+      "severity_rationale": "QoS downgrade could cause message loss",
+      "occurrence": 2,
+      "occurrence_rationale": "Explicit key insertion; golden vector tested",
+      "detection": 2,
+      "detection_rationale": "relay_message_meta_canonical + vector_to_relay_message",
+      "rpn": 28,
+      "asil": "ASIL-B",
+      "mitigation": "Explicit BTreeMap insertion for both keys; tested against canonical golden vector",
+      "reqs": [
+        "REQ-RELAY-008",
+        "REQ-RELAY-020",
+        "REQ-MSG-005"
+      ]
     },
     {
+      "id": "FMEA-012",
       "component": "message",
       "function": "from_relay_message",
-      "failure_modes": ["QoS not restored from meta", "Retained flag not restored"],
-      "effects": ["Wrong QoS on published message", "Retained semantics lost"],
-      "severity": "high",
-      "detection_control": "relay_conformance::vector_from_relay_message_roundtrip"
+      "failure_modes": [
+        "QoS restored incorrectly from meta string",
+        "Topic empty after conversion"
+      ],
+      "local_effect": "Wrong QoS delivered; Topic-empty error on publish",
+      "system_effect": "Message dropped by broker due to bad QoS or empty topic",
+      "severity": 7,
+      "severity_rationale": "Message drop in safety loop",
+      "occurrence": 2,
+      "occurrence_rationale": "QoS parsed with try_from; empty topic checked",
+      "detection": 2,
+      "detection_rationale": "vector_from_relay_message_roundtrip test",
+      "rpn": 28,
+      "asil": "ASIL-B",
+      "mitigation": "QoS parsed via QoS::try_from; unknown values default to AtMostOnce; empty topic returns Err",
+      "reqs": [
+        "REQ-RELAY-009",
+        "REQ-SAFE-006",
+        "REQ-ERR-001"
+      ]
+    },
+    {
+      "id": "FMEA-013",
+      "component": "client",
+      "function": "Subscription::recv",
+      "failure_modes": [
+        "Subscription recv returns None prematurely (channel dropped)",
+        "Unsubscribe does not stop delivery"
+      ],
+      "local_effect": "Subscriber loop exits unexpectedly",
+      "system_effect": "Signal monitoring task terminates; hazard goes undetected",
+      "severity": 8,
+      "severity_rationale": "Silent termination of monitoring task",
+      "occurrence": 2,
+      "occurrence_rationale": "mpsc channel lifetime tied to SubRecord in BrokerState",
+      "detection": 3,
+      "detection_rationale": "mock_publish_subscribe verifies receipt; no explicit unsubscribe-stop test",
+      "rpn": 48,
+      "asil": "ASIL-B",
+      "mitigation": "Channel sender held in SubRecord; unsubscribe removes SubRecord; channel close signals None",
+      "reqs": [
+        "REQ-SUB-001",
+        "REQ-SUB-002",
+        "REQ-SAFE-002"
+      ]
+    },
+    {
+      "id": "FMEA-014",
+      "component": "error",
+      "function": "Error::kind",
+      "failure_modes": [
+        "RELAY sentinel mapping returns wrong variant",
+        "Error variant added without updating RELAY mapping"
+      ],
+      "local_effect": "RELAY framework misclassifies error; wrong retry policy applied",
+      "system_effect": "Incorrect fault recovery in vehicle bus bridge",
+      "severity": 5,
+      "severity_rationale": "Wrong retry policy is recoverable but wastes time",
+      "occurrence": 2,
+      "occurrence_rationale": "Explicit match arms; clippy catches non-exhaustive match",
+      "detection": 2,
+      "detection_rationale": "error_sentinel_kind_mapping tests all variants",
+      "rpn": 20,
+      "asil": "ASIL-A",
+      "mitigation": "Exhaustive match via clippy; all sentinels tested; CI enforces -D warnings",
+      "reqs": [
+        "REQ-MQTT-005",
+        "REQ-RELAY-003",
+        "REQ-ERR-001"
+      ]
+    },
+    {
+      "id": "FMEA-015",
+      "component": "client",
+      "function": "BackPressurePolicy",
+      "failure_modes": [
+        "DropOldest implementation drops the new message instead",
+        "Block policy causes deadlock in single-threaded context"
+      ],
+      "local_effect": "Wrong message retained under back-pressure; potential deadlock",
+      "system_effect": "Incorrect data processed; system hang",
+      "severity": 7,
+      "severity_rationale": "Incorrect data in vehicle state machine",
+      "occurrence": 2,
+      "occurrence_rationale": "Policy logic is simple; each branch tested",
+      "detection": 2,
+      "detection_rationale": "sub_back_pressure_drop_newest and drop_oldest tests",
+      "rpn": 28,
+      "asil": "ASIL-B",
+      "mitigation": "Three back-pressure policies tested independently; Block spawns task to avoid deadlock",
+      "reqs": [
+        "REQ-RELAY-004",
+        "REQ-SUB-006",
+        "REQ-SUB-007",
+        "REQ-SUB-008",
+        "REQ-HARA-005"
+      ]
     }
   ]
 }

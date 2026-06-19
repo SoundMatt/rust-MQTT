@@ -64,6 +64,10 @@
 //fusa:req REQ-RELAY-014
 //fusa:req REQ-RELAY-015
 //fusa:req REQ-RELAY-016
+//fusa:req REQ-RELAY-017
+//fusa:req REQ-RELAY-018
+//fusa:req REQ-RELAY-019
+//fusa:req REQ-RELAY-020
 
 pub(crate) mod base64_serde;
 pub(crate) mod base64_serde_opt;

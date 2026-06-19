@@ -19,6 +19,11 @@
 //fusa:req REQ-WILD-007
 //fusa:req REQ-WILD-008
 pub fn match_topic(filter: &str, topic: &str) -> bool {
+    // MQTT §4.7.3: zero-length topic or filter is not permitted.
+    if filter.is_empty() || topic.is_empty() {
+        return false;
+    }
+
     // Exact match short-circuit.
     if filter == topic {
         return true;

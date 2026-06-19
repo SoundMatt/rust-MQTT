@@ -208,7 +208,9 @@ jobs:
         run: rsfusa boundary --dir . || true
 
       - name: HARA
-        run: rsfusa hara show --dir . || true
+        run: |
+          rsfusa hara show --dir . || true
+          rsfusa hara validate --dir . || true
 
       - name: Safety case assembly
         run: rsfusa safety-case --dir . || true
@@ -246,8 +248,14 @@ jobs:
             trace.json
             fmea.json
             tara.json
+            hara.json
             safety-case.json
             safety-case.md
+            boundary-diagram.json
+            SAFETY_MANUAL.md
+            sbom.json
+            provenance.json
+            requirements.json
             iso26262-gap-report.json
             results.sarif
             audit-pack.zip

@@ -35,8 +35,8 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
 use crate::client::{
-    BackPressurePolicy, Client, HealthProvider, HealthStatus, MetricsProvider, MetricsSnapshot,
-    SubscriberConfig, Subscription,
+    BackPressurePolicy, Client, Drainer, HealthProvider, HealthStatus, MetricsProvider,
+    MetricsSnapshot, SubscriberConfig, Subscription,
 };
 use crate::error::Error;
 use crate::message::{Message, QoS};
@@ -302,6 +302,14 @@ impl Client for MockClient {
         self.state.closed.store(true, Ordering::SeqCst);
         self.state.subs.lock().await.clear();
         Ok(())
+    }
+}
+
+//fusa:req REQ-RELAY-014
+#[async_trait]
+impl Drainer for MockClient {
+    async fn close_with_drain(&self, _deadline: std::time::Duration) -> Result<(), Error> {
+        self.close().await
     }
 }
 

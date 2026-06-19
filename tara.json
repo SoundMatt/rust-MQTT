@@ -1,63 +1,331 @@
 {
-  "format": "x-FuSa TARA v1",
+  "format": "rust-fusa-tara-v2",
   "generated_at": "2026-06-19T00:00:00Z",
-  "module": "github.com/SoundMatt/rust-MQTT",
-  "standard": "ISO 21434",
+  "module": "rust-MQTT",
+  "version": "1.0.0",
+  "standard": "ISO 21434:2021 \u00a79, STRIDE, CVSS v3.1",
+  "scope": "rust-MQTT library and CLI; excludes broker infrastructure and TLS termination",
+  "assets": [
+    {
+      "id": "A-001",
+      "name": "MQTT message payload",
+      "description": "Vehicle signal data carried in MQTT payloads (sensor readings, actuator commands)",
+      "sensitivity": "high"
+    },
+    {
+      "id": "A-002",
+      "name": "MQTT topic namespace",
+      "description": "Topic strings that route messages to the correct consumers",
+      "sensitivity": "high"
+    },
+    {
+      "id": "A-003",
+      "name": "MQTT credentials",
+      "description": "Username/password in CONNECT packet",
+      "sensitivity": "high"
+    },
+    {
+      "id": "A-004",
+      "name": "MQTT session state",
+      "description": "Subscription list, retained messages, packet IDs",
+      "sensitivity": "medium"
+    },
+    {
+      "id": "A-005",
+      "name": "RELAY crossbar routing",
+      "description": "relay.Message meta fields used for QoS and routing",
+      "sensitivity": "high"
+    },
+    {
+      "id": "A-006",
+      "name": "Build artifacts",
+      "description": "Compiled binary and dependency supply chain",
+      "sensitivity": "medium"
+    }
+  ],
+  "damage_scenarios": [
+    {
+      "id": "DS-001",
+      "description": "Incorrect actuator command sent due to malicious or malformed payload",
+      "impact": "Safety",
+      "severity": "critical"
+    },
+    {
+      "id": "DS-002",
+      "description": "Vehicle monitoring system blinded by topic misrouting or DoS",
+      "impact": "Safety",
+      "severity": "high"
+    },
+    {
+      "id": "DS-003",
+      "description": "Credential theft enabling malicious broker connections",
+      "impact": "Security",
+      "severity": "high"
+    },
+    {
+      "id": "DS-004",
+      "description": "Supply-chain compromise of library dependency",
+      "impact": "Safety+Security",
+      "severity": "high"
+    }
+  ],
   "threats": [
     {
       "id": "THREAT-001",
-      "title": "Malformed MQTT packet injection",
-      "asset": "TCP connection parser (v3::packet)",
+      "title": "Malformed MQTT packet injection (Tampering)",
+      "stride": "T",
+      "asset": "A-001 / A-002",
+      "damage_scenario": "DS-001",
       "attack_vector": "Network",
       "attack_complexity": "Low",
-      "impact": "Broker crash or incorrect message routing",
+      "privileges_required": "None",
+      "user_interaction": "None",
+      "cvss_score": 7.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+      "confidentiality_impact": "None",
+      "integrity_impact": "High",
+      "availability_impact": "None",
       "likelihood": "medium",
       "risk": "high",
-      "mitigation": "All packet parsers use length-checked slicing; malformed packets cause early return, not panic"
+      "attack_feasibility": "medium",
+      "mitigation": "All packet parsers use length-checked slicing with no unsafe; malformed packets produce Error::Protocol and terminate connection; no bytes propagated to caller",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-CYBER-001",
+        "REQ-CYBER-002",
+        "REQ-ERR-004",
+        "REQ-SAFE-001"
+      ]
     },
     {
       "id": "THREAT-002",
-      "title": "Topic wildcard injection",
-      "asset": "match_topic function",
-      "attack_vector": "API",
+      "title": "System-topic namespace spoofing via wildcard (Spoofing)",
+      "stride": "S",
+      "asset": "A-002",
+      "damage_scenario": "DS-002",
+      "attack_vector": "Network",
       "attack_complexity": "Low",
-      "impact": "Subscriber receives unintended messages",
-      "likelihood": "medium",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 6.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+      "confidentiality_impact": "None",
+      "integrity_impact": "High",
+      "availability_impact": "None",
+      "likelihood": "low",
       "risk": "medium",
-      "mitigation": "match_topic enforces §4.7 system-topic protection; '$' topics not matched by bare '#' or '+'"
+      "attack_feasibility": "low",
+      "mitigation": "match_topic enforces \u00a74.7.2: bare `#` and `+` at first level do not match `$` topics; 10+ unit tests and integration test verify isolation",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-CYBER-004",
+        "REQ-WILD-002",
+        "REQ-HARA-004"
+      ]
     },
     {
       "id": "THREAT-003",
-      "title": "Channel overflow via high-rate publish",
-      "asset": "MockClient / v3::Client subscription channel",
-      "attack_vector": "API",
-      "attack_complexity": "Low",
-      "impact": "Message loss or back-pressure blocking",
+      "title": "MQTT credential interception (Information Disclosure)",
+      "stride": "I",
+      "asset": "A-003",
+      "damage_scenario": "DS-003",
+      "attack_vector": "Network",
+      "attack_complexity": "High",
+      "privileges_required": "None",
+      "user_interaction": "None",
+      "cvss_score": 5.9,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:N/A:N",
+      "confidentiality_impact": "High",
+      "integrity_impact": "None",
+      "availability_impact": "None",
       "likelihood": "medium",
       "risk": "medium",
-      "mitigation": "BackPressurePolicy (DropNewest/DropOldest/Block) configured per subscription; default DropNewest prevents blocking"
+      "attack_feasibility": "medium",
+      "mitigation": "Credentials transmitted in CONNECT only; TLS feature available via `tls` Cargo feature; credentials not logged; library does not cache credentials after connection",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-CYBER-003"
+      ]
     },
     {
       "id": "THREAT-004",
-      "title": "CONNACK spoofing (return code 0 on rejection)",
-      "asset": "v3::Client CONNACK handling",
+      "title": "Subscriber channel exhaustion / DoS (Denial of Service)",
+      "stride": "D",
+      "asset": "A-004",
+      "damage_scenario": "DS-002",
       "attack_vector": "Network",
-      "attack_complexity": "High",
-      "impact": "Client connects to malicious broker",
-      "likelihood": "low",
-      "risk": "medium",
-      "mitigation": "CONNACK return code checked; ConnectionRefused returned for non-zero codes. TLS feature available for transport security."
+      "attack_complexity": "Low",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 6.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+      "confidentiality_impact": "None",
+      "integrity_impact": "None",
+      "availability_impact": "High",
+      "likelihood": "medium",
+      "risk": "high",
+      "attack_feasibility": "medium",
+      "mitigation": "BackPressurePolicy::DropNewest prevents channel overflow; DropOldest keeps newest; Block is configurable. Channel depth bounded by SubscriberConfig::channel_depth (default 64)",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-SAFE-003",
+        "REQ-HARA-005",
+        "REQ-SUB-006",
+        "REQ-SUB-007",
+        "REQ-SUB-008"
+      ]
     },
     {
       "id": "THREAT-005",
-      "title": "Payload size exhaustion",
-      "asset": "Broker message routing",
+      "title": "Packet-ID replay attack on QoS 1 (Repudiation)",
+      "stride": "R",
+      "asset": "A-001",
+      "damage_scenario": "DS-001",
+      "attack_vector": "Network",
+      "attack_complexity": "High",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 4.2,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:N/I:L/A:N",
+      "confidentiality_impact": "None",
+      "integrity_impact": "Low",
+      "availability_impact": "None",
+      "likelihood": "low",
+      "risk": "medium",
+      "attack_feasibility": "low",
+      "mitigation": "Packet IDs drawn from monotonically increasing AtomicU64 per session; duplicate PUBACK for unknown packet ID is silently ignored",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-CYBER-008"
+      ]
+    },
+    {
+      "id": "THREAT-006",
+      "title": "RELAY meta injection \u2014 QoS downgrade (Tampering)",
+      "stride": "T",
+      "asset": "A-005",
+      "damage_scenario": "DS-001",
+      "attack_vector": "Local",
+      "attack_complexity": "Low",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 5.5,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:N",
+      "confidentiality_impact": "None",
+      "integrity_impact": "High",
+      "availability_impact": "None",
+      "likelihood": "low",
+      "risk": "medium",
+      "attack_feasibility": "low",
+      "mitigation": "from_message parses mqtt.qos from meta using QoS::try_from; invalid values default to AtMostOnce (conservative, not elevated); golden vector test validates canonical mapping",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-RELAY-009",
+        "REQ-RELAY-020",
+        "REQ-CYBER-001"
+      ]
+    },
+    {
+      "id": "THREAT-007",
+      "title": "Dependency supply-chain compromise (Tampering / Elevation)",
+      "stride": "T E",
+      "asset": "A-006",
+      "damage_scenario": "DS-004",
+      "attack_vector": "Supply chain",
+      "attack_complexity": "High",
+      "privileges_required": "None",
+      "user_interaction": "None",
+      "cvss_score": 8.1,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:C/C:H/I:H/A:H",
+      "confidentiality_impact": "High",
+      "integrity_impact": "High",
+      "availability_impact": "High",
+      "likelihood": "low",
+      "risk": "high",
+      "attack_feasibility": "low",
+      "mitigation": "cargo audit in CI (CVSS>=7.0 fails build); Cargo.lock committed (pinned versions); SBOM (sbom.json) generated per release; build provenance (provenance.json) records all inputs",
+      "residual_risk": "medium",
+      "reqs": [
+        "REQ-CYBER-005",
+        "REQ-CYBER-006",
+        "REQ-CYBER-007",
+        "REQ-DO-004"
+      ]
+    },
+    {
+      "id": "THREAT-008",
+      "title": "Unbounded payload causes memory exhaustion (Denial of Service)",
+      "stride": "D",
+      "asset": "A-001",
+      "damage_scenario": "DS-002",
       "attack_vector": "Network",
       "attack_complexity": "Low",
-      "impact": "Memory exhaustion",
+      "privileges_required": "None",
+      "user_interaction": "None",
+      "cvss_score": 7.5,
+      "cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+      "confidentiality_impact": "None",
+      "integrity_impact": "None",
+      "availability_impact": "High",
       "likelihood": "medium",
+      "risk": "high",
+      "attack_feasibility": "medium",
+      "mitigation": "Publish path rejects payloads exceeding MQTT maximum (268,435,455 bytes) with Error::PayloadTooLarge before allocation; varint length capped during packet encoding",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-SAFE-005",
+        "REQ-CYBER-002",
+        "REQ-ERR-001"
+      ]
+    },
+    {
+      "id": "THREAT-009",
+      "title": "Wildcard subscription flood (Elevation of Privilege)",
+      "stride": "E",
+      "asset": "A-002",
+      "damage_scenario": "DS-002",
+      "attack_vector": "Local",
+      "attack_complexity": "Low",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 4.3,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:L/I:N/A:L",
+      "confidentiality_impact": "Low",
+      "integrity_impact": "None",
+      "availability_impact": "Low",
+      "likelihood": "low",
+      "risk": "low",
+      "attack_feasibility": "low",
+      "mitigation": "Subscription count observable via MockClient::subscription_count(); integrators should apply broker-level subscription rate limits; back-pressure prevents downstream overflow",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-DIAG-004",
+        "REQ-SAFE-003"
+      ]
+    },
+    {
+      "id": "THREAT-010",
+      "title": "Credential logging via debug output (Information Disclosure)",
+      "stride": "I",
+      "asset": "A-003",
+      "damage_scenario": "DS-003",
+      "attack_vector": "Local",
+      "attack_complexity": "Low",
+      "privileges_required": "Low",
+      "user_interaction": "None",
+      "cvss_score": 4.0,
+      "cvss_vector": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N",
+      "confidentiality_impact": "High",
+      "integrity_impact": "None",
+      "availability_impact": "None",
+      "likelihood": "low",
       "risk": "medium",
-      "mitigation": "Maximum payload controlled by channel capacity; PayloadTooLarge sentinel defined for upper-layer enforcement"
+      "attack_feasibility": "low",
+      "mitigation": "ConnectOptions does not derive Debug; password field is not printed in any log output; CLI does not echo credentials",
+      "residual_risk": "low",
+      "reqs": [
+        "REQ-CYBER-003"
+      ]
     }
   ]
 }

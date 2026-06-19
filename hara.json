@@ -1,0 +1,204 @@
+{
+  "format": "rust-fusa-hara-v1",
+  "generated_at": "2026-06-19T00:00:00Z",
+  "module": "rust-MQTT",
+  "version": "1.0.0",
+  "standard": "ISO 26262:2018 Part 3 \u00a76 \u2014 Hazard Analysis and Risk Assessment",
+  "scope": "rust-MQTT as a Safety Element Out Of Context (SEOOC). System-level HARA to be performed by the integrating application for its specific operational context.",
+  "item_definition": "rust-MQTT is a pure-Rust MQTT client library providing publish/subscribe messaging over TCP for safety-critical vehicle signal routing. It is used in vehicle network gateways and COVESA VISSR implementations.",
+  "severity_scale": "S0=No injury, S1=Light/moderate injury, S2=Severe injury (survival probable), S3=Life-threatening (survival uncertain) \u2014 per ISO 26262 Part 3 Table 1",
+  "exposure_scale": "E0=Incredibly unlikely, E1=Very low, E2=Low, E3=Medium, E4=High \u2014 per ISO 26262 Part 3 Table 2",
+  "controllability_scale": "C0=Controllable in general, C1=Simply controllable, C2=Normally controllable, C3=Difficult to control \u2014 per ISO 26262 Part 3 Table 3",
+  "asil_determination": "ISO 26262 Part 3 Table 4: S x E x C matrix",
+  "hazards": [
+    {
+      "id": "HAZ-001",
+      "name": "Message Loss",
+      "description": "An MQTT message carrying a safety-critical vehicle signal (brake-by-wire command, ADAS alert) is not delivered due to library error"
+    },
+    {
+      "id": "HAZ-002",
+      "name": "Message Corruption",
+      "description": "An MQTT message payload or topic is silently modified before delivery, causing the receiving subsystem to act on incorrect data"
+    },
+    {
+      "id": "HAZ-003",
+      "name": "Topic Misrouting",
+      "description": "A message is delivered to the wrong subscriber due to incorrect wildcard matching, causing unintended actuation"
+    },
+    {
+      "id": "HAZ-004",
+      "name": "Stale Message Delivered",
+      "description": "A retained message with an expired timestamp is delivered to a new subscriber, causing action on outdated vehicle state"
+    },
+    {
+      "id": "HAZ-005",
+      "name": "Connection Blackout",
+      "description": "The library enters a silently disconnected state while reporting as connected, causing all messages to be lost without indication"
+    },
+    {
+      "id": "HAZ-006",
+      "name": "System Hang",
+      "description": "A subscriber task deadlocks or blocks permanently due to back-pressure failure, causing loss of vehicle signal monitoring"
+    }
+  ],
+  "hazardous_events": [
+    {
+      "id": "HE-001",
+      "hazard": "HAZ-001",
+      "operational_situation": "High-speed highway driving (> 100 km/h), vehicle approaching obstacle",
+      "hazardous_event": "Brake-by-wire MQTT command lost; vehicle does not decelerate",
+      "severity": "S3",
+      "severity_rationale": "Potential for fatal collision",
+      "exposure": "E4",
+      "exposure_rationale": "High-speed driving occurs frequently for vehicles with automated driving features",
+      "controllability": "C3",
+      "controllability_rationale": "Driver may not be monitoring for automated brake failure; reaction time insufficient at speed",
+      "asil": "ASIL-D",
+      "asil_rationale": "S3 x E4 x C3 \u2192 ASIL-D per ISO 26262 Part 3 Table 4",
+      "note": "ASIL-D exceeds this library's ASIL-B rating. System integrator MUST NOT use rust-MQTT as sole path for brake-by-wire commands without additional ASIL-D redundancy at system level.",
+      "safety_goal": "SG-001: rust-MQTT shall not be used as the sole communication path for ASIL-D functions without system-level redundancy",
+      "reqs": [
+        "REQ-HARA-002",
+        "REQ-SAFE-008"
+      ]
+    },
+    {
+      "id": "HE-002",
+      "hazard": "HAZ-001",
+      "operational_situation": "Normal driving, ADAS collision warning active",
+      "hazardous_event": "ADAS hazard alert MQTT message lost; driver not warned of imminent collision",
+      "severity": "S2",
+      "exposure": "E3",
+      "exposure_rationale": "Collision situations occur with medium frequency for ADAS-equipped vehicles",
+      "controllability": "C2",
+      "controllability_rationale": "Driver may be able to observe hazard directly and react",
+      "asil": "ASIL-B",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B per ISO 26262 Part 3 Table 4",
+      "safety_goal": "SG-002: Message delivery shall be reliable; QoS \u2265 1 shall be used for safety-relevant ADAS signals",
+      "reqs": [
+        "REQ-HARA-002",
+        "REQ-QOS-002",
+        "REQ-MQTT-003"
+      ]
+    },
+    {
+      "id": "HE-003",
+      "hazard": "HAZ-003",
+      "operational_situation": "Multiple vehicle subsystems sharing MQTT broker",
+      "hazardous_event": "Throttle command routed to brake subsystem subscriber due to topic wildcard mismatch",
+      "severity": "S3",
+      "exposure": "E4",
+      "exposure_rationale": "Multi-subsystem MQTT deployment is the primary use case",
+      "controllability": "C3",
+      "controllability_rationale": "Incorrect actuation provides no warning; driver cannot anticipate",
+      "asil": "ASIL-D",
+      "asil_rationale": "S3 x E4 x C3 \u2192 ASIL-D",
+      "note": "As for HE-001, system integrator must use topic naming conventions that prevent single wildcard expressions from spanning safety and non-safety domains.",
+      "safety_goal": "SG-003: Topic namespaces for safety-critical and non-safety signals shall be segregated; rust-MQTT wildcard matching shall exactly follow MQTT \u00a74.7",
+      "reqs": [
+        "REQ-HARA-004",
+        "REQ-WILD-001",
+        "REQ-WILD-002",
+        "REQ-CYBER-004"
+      ]
+    },
+    {
+      "id": "HE-004",
+      "hazard": "HAZ-004",
+      "operational_situation": "Vehicle startup; subsystem subscribing to retrieve last known state",
+      "hazardous_event": "Stale retained message (e.g. 5-minute-old sensor reading) delivered at startup; system acts on outdated value",
+      "severity": "S1",
+      "exposure": "E3",
+      "exposure_rationale": "Startup occurs regularly; retained messages always delivered on subscribe",
+      "controllability": "C2",
+      "controllability_rationale": "Systems typically verify freshness, but not always automated",
+      "asil": "ASIL-A",
+      "asil_rationale": "S1 x E3 x C2 \u2192 ASIL-A",
+      "safety_goal": "SG-004: Integrators shall use expiry_interval on retained safety signals; rust-MQTT shall preserve expiry_interval across the RELAY layer",
+      "reqs": [
+        "REQ-HARA-003",
+        "REQ-V5-MSG-005"
+      ]
+    },
+    {
+      "id": "HE-005",
+      "hazard": "HAZ-006",
+      "operational_situation": "High-throughput signal bus; subscriber slow to consume",
+      "hazardous_event": "Subscriber channel full; back-pressure policy not applied; async task blocks indefinitely",
+      "severity": "S2",
+      "exposure": "E3",
+      "exposure_rationale": "High-throughput signal bursts are common in vehicle networks (e.g. radar point clouds)",
+      "controllability": "C2",
+      "controllability_rationale": "Application may detect task silence and restart, but not guaranteed",
+      "asil": "ASIL-B",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B",
+      "safety_goal": "SG-005: rust-MQTT shall enforce configured back-pressure policy; no subscriber channel shall block the publisher task",
+      "reqs": [
+        "REQ-HARA-005",
+        "REQ-SAFE-003",
+        "REQ-SUB-006",
+        "REQ-SUB-007",
+        "REQ-SUB-008"
+      ]
+    },
+    {
+      "id": "HE-006",
+      "hazard": "HAZ-005",
+      "operational_situation": "Continuous vehicle monitoring; TCP connection silently dropped by network",
+      "hazardous_event": "Library reports healthy but CONNACK was rejected; all publishes silently discarded",
+      "severity": "S2",
+      "exposure": "E3",
+      "exposure_rationale": "Network interruptions occur in vehicle environments (tunnels, RF interference)",
+      "controllability": "C2",
+      "controllability_rationale": "Application may implement watchdog; not automatic",
+      "asil": "ASIL-B",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B",
+      "safety_goal": "SG-006: rust-MQTT shall validate CONNACK return code and return Error::ConnectionRefused on rejection; integrators shall implement reconnect logic",
+      "reqs": [
+        "REQ-CONN-009",
+        "REQ-ERR-003",
+        "REQ-ERR-005",
+        "REQ-HARA-002"
+      ]
+    }
+  ],
+  "safety_goals": [
+    {
+      "id": "SG-001",
+      "description": "rust-MQTT shall not be used as the sole communication path for ASIL-D functions without system-level redundancy",
+      "asil": "ASIL-D",
+      "note": "Integration obligation \u2014 see SAFETY_MANUAL.md \u00a73"
+    },
+    {
+      "id": "SG-002",
+      "description": "Message delivery shall be reliable; QoS \u2265 1 shall be used for safety-relevant signals",
+      "asil": "ASIL-B",
+      "note": "See REQ-HARA-002, REQ-QOS-002"
+    },
+    {
+      "id": "SG-003",
+      "description": "Topic namespaces for safety-critical and non-safety signals shall be segregated",
+      "asil": "ASIL-D",
+      "note": "Integration obligation \u2014 see SAFETY_MANUAL.md \u00a74"
+    },
+    {
+      "id": "SG-004",
+      "description": "Integrators shall use expiry_interval on retained safety signals",
+      "asil": "ASIL-A",
+      "note": "See REQ-HARA-003, REQ-V5-MSG-005"
+    },
+    {
+      "id": "SG-005",
+      "description": "No subscriber channel shall block the publisher task; back-pressure must be configured",
+      "asil": "ASIL-B",
+      "note": "See REQ-HARA-005"
+    },
+    {
+      "id": "SG-006",
+      "description": "Integrators shall implement reconnect logic and monitor CONNACK validation",
+      "asil": "ASIL-B",
+      "note": "See SAFETY_MANUAL.md \u00a75"
+    }
+  ]
+}
