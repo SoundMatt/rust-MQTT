@@ -15,6 +15,7 @@ use rust_mqtt::client::{Client, SubscriberConfig};
 use rust_mqtt::message::{Message, QoS};
 use rust_mqtt::mock::MockClient;
 use rust_mqtt::relay::Message as RelayMessage;
+use rust_mqtt::v3::{Client as V3Client, ConnectOptions};
 
 // ---------------------------------------------------------------------------
 // CLI argument definitions
@@ -54,7 +55,8 @@ enum Commands {
     /// on stdin and publish each until EOF (crossbar destination mode, RELAY
     /// v1.8 §send). In that mode --topic and --payload are ignored.
     Send {
-        /// Broker address (host:port).
+        /// Broker address (host:port). Connected to over TCP unless --mock
+        /// is set or --format json is used (crossbar sink mode).
         #[arg(long, default_value = "localhost:1883")]
         broker: String,
         /// MQTT topic to publish to. Ignored when --format json.
@@ -73,11 +75,16 @@ enum Commands {
         /// relay.Message from stdin, crossbar sink).
         #[arg(long, value_enum, default_value = "text")]
         format: OutputFormat,
+        /// Use the in-process mock broker instead of connecting to
+        /// --broker. Useful for local testing without a live broker.
+        #[arg(long)]
+        mock: bool,
     },
 
     /// Subscribe to a topic and stream messages.
     Subscribe {
-        /// Broker address (host:port).
+        /// Broker address (host:port). Connected to over TCP unless --mock
+        /// is set.
         #[arg(long, default_value = "localhost:1883")]
         broker: String,
         /// Topic filter (MQTT §4.7 wildcards supported).
@@ -92,6 +99,10 @@ enum Commands {
         /// QoS level for the subscription.
         #[arg(long, default_value = "0")]
         qos: u8,
+        /// Use the in-process mock broker instead of connecting to
+        /// --broker. Useful for local testing without a live broker.
+        #[arg(long)]
+        mock: bool,
     },
 
     /// Convert a canonical mqtt.Message JSON from stdin to relay.Message JSON on stdout.
@@ -146,14 +157,16 @@ async fn run(cli: Cli) -> Result<i32, Box<dyn std::error::Error>> {
             qos,
             retain,
             format,
-        } => cmd_send(broker, topic, payload, qos, retain, format).await,
+            mock,
+        } => cmd_send(broker, topic, payload, qos, retain, format, mock).await,
         Commands::Subscribe {
             broker,
             topic,
             count,
             format,
             qos,
-        } => cmd_subscribe(broker, topic, count, format, qos).await,
+            mock,
+        } => cmd_subscribe(broker, topic, count, format, qos, mock).await,
         Commands::Convert { protocol, format } => cmd_convert(protocol, format),
     }
 }
@@ -239,23 +252,45 @@ fn cmd_status(format: OutputFormat) -> Result<i32, Box<dyn std::error::Error>> {
 }
 
 // ---------------------------------------------------------------------------
+// broker selection
+// ---------------------------------------------------------------------------
+
+/// Build the `Client` backend `send`/`subscribe` operate over: the
+/// in-process mock (only when `--mock` is passed explicitly) or a real
+/// MQTT v3.1.1 TCP connection to `broker`.
+async fn build_client(
+    broker: &str,
+    mock: bool,
+) -> Result<Box<dyn Client>, Box<dyn std::error::Error>> {
+    if mock {
+        Ok(Box::new(MockClient::new()))
+    } else {
+        let client = V3Client::connect(ConnectOptions::new(broker)).await?;
+        Ok(Box::new(client))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // send
 // ---------------------------------------------------------------------------
 
 //fusa:req REQ-RELAY-017
 async fn cmd_send(
-    _broker: String,
+    broker: String,
     topic: String,
     payload: String,
     qos_val: u8,
-    _retain: bool,
+    retain: bool,
     format: OutputFormat,
+    mock: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     match format {
         OutputFormat::Json => {
-            // NDJSON crossbar sink: read relay.Message per line from stdin
+            // NDJSON crossbar sink (RELAY spec §11.2): reads relay.Message
+            // per line from stdin and publishes each to --broker (or the
+            // mock, with --mock), same backend selection as text mode.
             let stdin = std::io::stdin();
-            let client = MockClient::new();
+            let client = build_client(&broker, mock).await?;
             for line in stdin.lock().lines() {
                 let line = line?;
                 let trimmed = line.trim();
@@ -271,14 +306,21 @@ async fn cmd_send(
             Ok(0)
         }
         OutputFormat::Text => {
-            // Text mode: use --topic and --payload
+            // Text mode: use --topic and --payload against a real broker
+            // (or the mock, with --mock).
             if topic.is_empty() {
                 eprintln!("rust-mqtt: --topic is required in text mode");
                 return Ok(2);
             }
             let qos = QoS::try_from(qos_val)?;
-            let client = MockClient::new();
-            client.publish(&topic, qos, payload.into_bytes()).await?;
+            let client = build_client(&broker, mock).await?;
+            if retain {
+                client
+                    .publish_retained(&topic, qos, payload.into_bytes())
+                    .await?;
+            } else {
+                client.publish(&topic, qos, payload.into_bytes()).await?;
+            }
             println!("sent: {}", topic);
             Ok(0)
         }
@@ -291,14 +333,15 @@ async fn cmd_send(
 
 //fusa:req REQ-RELAY-018
 async fn cmd_subscribe(
-    _broker: String,
+    broker: String,
     topic: String,
     count: usize,
     format: OutputFormat,
     qos_val: u8,
+    mock: bool,
 ) -> Result<i32, Box<dyn std::error::Error>> {
     let qos = QoS::try_from(qos_val)?;
-    let client = MockClient::new();
+    let client = build_client(&broker, mock).await?;
     let mut sub = client
         .subscribe(&topic, qos, SubscriberConfig::default())
         .await?;

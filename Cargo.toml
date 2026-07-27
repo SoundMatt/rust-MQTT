@@ -1,8 +1,8 @@
 [package]
 name = "rust-mqtt"
-version = "1.0.0"
+version = "1.3.0"
 edition = "2021"
-description = "rust-MQTT: Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready. RELAY spec v1.10."
+description = "rust-MQTT: Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready. RELAY spec v1.11."
 license = "MPL-2.0"
 repository = "https://github.com/SoundMatt/rust-MQTT"
 homepage = "https://github.com/SoundMatt/rust-MQTT"

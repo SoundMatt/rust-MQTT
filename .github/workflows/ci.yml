@@ -99,7 +99,7 @@ jobs:
           test "$proto_ec" -eq 2 && echo 'convert exit-2 on bad protocol OK' || \
             { echo "FAIL: expected exit 2, got $proto_ec"; exit 1; }
           printf '{"protocol":4,"version":{"major":0,"minor":0,"patch":0},"id":"test/t","payload":"aGVsbG8=","timestamp":"1970-01-01T00:00:00Z","meta":{"mqtt.qos":"0","mqtt.retained":"false"}}\n' \
-            | ./target/release/rust-mqtt send --format json && echo 'send --format json OK'
+            | ./target/release/rust-mqtt send --format json --mock && echo 'send --format json --mock OK'
 
   # ── RELAY conformance gate (§20.1.1) ──────────────────────────────────────
   relay-conform:

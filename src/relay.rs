@@ -188,17 +188,35 @@ pub enum Error {
 // Context
 // ---------------------------------------------------------------------------
 
-/// Execution context carrying cancellation and deadline.
-/// Wraps a tokio CancellationToken placeholder — callers pass
-/// `Context::background()` for fire-and-forget operations.
-#[derive(Clone, Debug, Default)]
+/// Execution context carrying an optional deadline, per RELAY spec §18.3.
+///
+/// `Context::background()` never expires (fire-and-forget operations).
+/// `Context::with_timeout(d)` expires `d` from construction; `done()` reports
+/// whether that deadline has passed so blocking `relay::Node` operations
+/// (e.g. `send`) can honor cancellation (spec §6 requirement 5).
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Context {
-    _private: (),
+    deadline: Option<std::time::Instant>,
 }
 
 impl Context {
+    /// A context that never expires.
     pub fn background() -> Self {
-        Self { _private: () }
+        Self { deadline: None }
+    }
+
+    /// A context that expires `d` from now.
+    pub fn with_timeout(d: std::time::Duration) -> Self {
+        Self {
+            deadline: Some(std::time::Instant::now() + d),
+        }
+    }
+
+    /// Whether this context's deadline has passed. Always `false` for
+    /// `background()`.
+    pub fn done(&self) -> bool {
+        self.deadline
+            .is_some_and(|d| std::time::Instant::now() >= d)
     }
 }
 
@@ -208,7 +226,7 @@ impl Context {
 
 /// Receiver handle for a RELAY-level message subscription.
 pub struct MessageReceiver {
-    pub(crate) rx: mpsc::Receiver<Message>,
+    pub(crate) rx: crate::backpressure::RingReceiver<Message>,
     #[allow(dead_code)]
     pub(crate) inner: std::sync::Arc<SubInner>,
 }
@@ -224,13 +242,16 @@ impl MessageReceiver {
 // ---------------------------------------------------------------------------
 
 pub struct SubInner {
-    pub tx: mpsc::Sender<Message>,
+    pub tx: crate::backpressure::RingSender<Message>,
     pub closed: std::sync::atomic::AtomicBool,
     pub back_pressure: BackPressurePolicy,
 }
 
 impl SubInner {
-    pub fn new(tx: mpsc::Sender<Message>, back_pressure: BackPressurePolicy) -> Self {
+    pub fn new(
+        tx: crate::backpressure::RingSender<Message>,
+        back_pressure: BackPressurePolicy,
+    ) -> Self {
         Self {
             tx,
             closed: std::sync::atomic::AtomicBool::new(false),
@@ -238,26 +259,23 @@ impl SubInner {
         }
     }
 
-    pub fn push(&self, msg: Message) {
+    /// Push a message per this subscription's configured back-pressure
+    /// policy (RELAY spec §10.5.3). `DropOldest` genuinely evicts the head
+    /// of the queue rather than dropping the arriving message.
+    pub async fn push(&self, msg: Message) {
         use std::sync::atomic::Ordering;
         if self.closed.load(Ordering::Relaxed) {
             return;
         }
         match self.back_pressure {
             BackPressurePolicy::DropNewest => {
-                let _ = self.tx.try_send(msg);
+                let _ = self.tx.push_drop_newest(msg).await;
             }
             BackPressurePolicy::DropOldest => {
-                if self.tx.try_send(msg.clone()).is_err() {
-                    // drain one slot then retry
-                    let _ = self.tx.try_send(msg);
-                }
+                let _ = self.tx.push_drop_oldest(msg).await;
             }
             BackPressurePolicy::Block => {
-                let tx = self.tx.clone();
-                tokio::spawn(async move {
-                    let _ = tx.send(msg).await;
-                });
+                self.tx.push_block(msg).await;
             }
         }
     }

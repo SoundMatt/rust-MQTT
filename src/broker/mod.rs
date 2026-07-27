@@ -159,6 +159,9 @@ async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
 
     // Per-session subscription IDs
     let session_sub_ids: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
+    // QoS 2 messages held between PUBREC and PUBREL, keyed by packet id.
+    // Per-connection: MQTT packet ids are scoped to a single client session.
+    let mut pending_qos2: HashMap<u16, (String, Vec<u8>)> = HashMap::new();
     tokio::spawn(async move {
         while let Some(pkt) = write_rx.recv().await {
             if writer.write_all(&pkt).await.is_err() {
@@ -206,6 +209,24 @@ async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
                 let payload = body[payload_off..].to_vec();
                 let qos = QoS::try_from(qos_bits).unwrap_or(QoS::AtMostOnce);
 
+                if qos_bits == 2 {
+                    // MQTT v3.1.1 §3.3/§4.3.3: hold the message and reply
+                    // PUBREC; only broadcast once PUBREL releases it.
+                    if retained_flag {
+                        let msg = Message {
+                            topic: topic.clone(),
+                            payload: payload.clone(),
+                            qos,
+                            retained: true,
+                            ..Default::default()
+                        };
+                        state.retained.lock().await.insert(topic.clone(), msg);
+                    }
+                    pending_qos2.insert(pid, (topic, payload));
+                    let _ = write_tx.try_send(vec![0x50, 0x02, (pid >> 8) as u8, pid as u8]);
+                    continue;
+                }
+
                 if retained_flag {
                     let msg = Message {
                         topic: topic.clone(),
@@ -217,8 +238,13 @@ async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
                     state.retained.lock().await.insert(topic.clone(), msg);
                 }
 
-                // Broadcast to matching subscribers
-                let pub_pkt = build_publish_pkt(&topic, &payload, qos, false, None);
+                // Broadcast to matching subscribers. This broker does not
+                // track per-subscriber packet ids or acks, so fan-out is
+                // always framed at QoS 0 regardless of the publisher's QoS —
+                // framing it at a higher QoS without a packet id would
+                // produce a malformed PUBLISH (the receiver would misread
+                // the first two payload bytes as a packet id).
+                let pub_pkt = build_publish_pkt(&topic, &payload, QoS::AtMostOnce, false, None);
                 let subs = state.subs.lock().await;
                 for sub in subs.values() {
                     if match_topic(&sub.filter, &topic) {
@@ -230,6 +256,23 @@ async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
                 if qos_bits == 1 {
                     let _ = write_tx.try_send(vec![0x40, 0x02, (pid >> 8) as u8, pid as u8]);
                 }
+            }
+            6 => {
+                // PUBREL: release a held QoS 2 message, broadcast it, PUBCOMP.
+                if body.len() < 2 {
+                    continue;
+                }
+                let pid = u16::from_be_bytes([body[0], body[1]]);
+                if let Some((topic, payload)) = pending_qos2.remove(&pid) {
+                    let pub_pkt = build_publish_pkt(&topic, &payload, QoS::AtMostOnce, false, None);
+                    let subs = state.subs.lock().await;
+                    for sub in subs.values() {
+                        if match_topic(&sub.filter, &topic) {
+                            let _ = sub.tx.try_send(pub_pkt.clone());
+                        }
+                    }
+                }
+                let _ = write_tx.try_send(vec![0x70, 0x02, (pid >> 8) as u8, pid as u8]);
             }
             8 => {
                 // SUBSCRIBE
@@ -262,11 +305,18 @@ async fn handle_client(stream: TcpStream, state: Arc<BrokerState>) {
                 );
                 session_sub_ids.lock().await.push(id);
 
-                // Deliver retained messages
+                // Deliver retained messages (always framed at QoS 0 — see
+                // the fan-out comment above).
                 let retained = state.retained.lock().await.clone();
                 for (topic, msg) in &retained {
                     if match_topic(&filter, topic) {
-                        let pkt = build_publish_pkt(&msg.topic, &msg.payload, msg.qos, true, None);
+                        let pkt = build_publish_pkt(
+                            &msg.topic,
+                            &msg.payload,
+                            QoS::AtMostOnce,
+                            true,
+                            None,
+                        );
                         let _ = write_tx.try_send(pkt);
                     }
                 }
@@ -409,6 +459,52 @@ mod tests {
             .unwrap();
         assert_eq!(msg.topic, "test/topic");
         assert_eq!(msg.payload, b"hello");
+
+        c1.close().await.unwrap();
+        c2.close().await.unwrap();
+        broker.close().await;
+    }
+
+    #[tokio::test]
+    //fusa:req REQ-QOS-003
+    async fn broker_qos2_exactly_once_roundtrip() {
+        // §5 issue: v3 Client::publish() at QoS::ExactlyOnce must complete
+        // the full PUBLISH→PUBREC→PUBREL→PUBCOMP handshake rather than
+        // silently behaving like QoS 0.
+        let broker = Broker::start("127.0.0.1:0").await.unwrap();
+        let addr = broker.addr();
+
+        let c1 = V3Client::connect(ConnectOptions::new(addr.to_string()).client_id("sub2"))
+            .await
+            .unwrap();
+        let c2 = V3Client::connect(ConnectOptions::new(addr.to_string()).client_id("pub2"))
+            .await
+            .unwrap();
+
+        // Subscribed at QoS 0: this test's focus is the *publisher*-side
+        // PUBLISH→PUBREC→PUBREL→PUBCOMP handshake (the bug in issue #5),
+        // not the broker's (out of scope) subscriber-side QoS 2 fan-out.
+        let mut sub = c1
+            .subscribe("qos2/#", QoS::AtMostOnce, SubscriberConfig::default())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // publish() must not return until the full handshake completes.
+        timeout(
+            Duration::from_secs(5),
+            c2.publish("qos2/topic", QoS::ExactlyOnce, b"exactly-once".to_vec()),
+        )
+        .await
+        .expect("publish must not hang")
+        .expect("publish must succeed");
+
+        let msg = timeout(Duration::from_secs(2), sub.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(msg.topic, "qos2/topic");
+        assert_eq!(msg.payload, b"exactly-once");
 
         c1.close().await.unwrap();
         c2.close().await.unwrap();

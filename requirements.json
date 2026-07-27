@@ -1625,6 +1625,99 @@
       "tests": [
         "safety_requirements::ci_relay_job_independent"
       ]
+    },
+    {
+      "id": "REQ-QOS-005",
+      "title": "QoS 2 exactly-once handshake",
+      "text": "The v3 TCP client's publish() shall complete the full PUBLISH\u2192PUBREC\u2192PUBREL\u2192PUBCOMP handshake for QoS::ExactlyOnce (MQTT v3.1.1 \u00a74.3.3) instead of returning immediately after PUBLISH.",
+      "category": "functional",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/v3/mod.rs",
+      "tests": [
+        "broker::tests::broker_qos2_exactly_once_roundtrip"
+      ]
+    },
+    {
+      "id": "REQ-MQTT-009",
+      "title": "TopicEmpty wraps NotConnected",
+      "text": "Error::TopicEmpty shall wrap relay::Error::NotConnected via kind() per RELAY spec \u00a75.4.",
+      "category": "spec-conformance",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/error.rs",
+      "tests": [
+        "error::tests::topic_empty_wraps_not_connected"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-021",
+      "title": "Context deadline",
+      "text": "relay::Context shall carry an optional deadline (with_timeout()/done()) per RELAY spec \u00a718.3, and NodeAdapter::send shall honor it, returning relay::Error::Timeout after the deadline expires.",
+      "category": "spec-conformance",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/relay.rs",
+      "tests": [
+        "adapt::tests::send_honors_ctx_timeout"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-022",
+      "title": "Adapt() error kind preservation",
+      "text": "NodeAdapter's send/subscribe/close shall map the underlying Client error to its real relay::Error kind via Error::kind() (RELAY spec \u00a75.2) instead of a fixed sentinel.",
+      "category": "spec-conformance",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/adapt.rs",
+      "tests": [
+        "adapt::tests::close_preserves_real_error_kind"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-023",
+      "title": "DropOldest genuine eviction",
+      "text": "BackPressurePolicy::DropOldest shall drain one message from the channel before enqueuing the arriving message (RELAY spec \u00a710.5.3) in every implementation (mock, v3, the bundled relay module, and the Adapt() layer).",
+      "category": "spec-conformance",
+      "criticality": "high",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/backpressure.rs",
+      "tests": [
+        "backpressure::tests::drop_oldest_evicts_head_and_keeps_newest",
+        "safety_requirements::sub_back_pressure_drop_oldest"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-024",
+      "title": "Canonical Health/Metrics shape",
+      "text": "HealthStatus/MetricsSnapshot field names and per-field counting semantics shall mirror the RELAY spec \u00a79/\u00a79.1 canonical Health/Metrics shape so implementations of different protocols report comparable numbers.",
+      "category": "spec-conformance",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/client.rs",
+      "tests": [
+        "mock::tests::health_and_metrics",
+        "mock::tests::metrics_track_drops_and_errors"
+      ]
+    },
+    {
+      "id": "REQ-RELAY-025",
+      "title": "CLI send/subscribe real broker connectivity",
+      "text": "CLI send/subscribe shall connect to --broker over a real MQTT v3.1.1 TCP connection by default; --mock shall opt into the in-process mock broker instead.",
+      "category": "functional",
+      "criticality": "medium",
+      "asil": "ASIL-B",
+      "sil": 2,
+      "impl": "src/bin/main.rs",
+      "tests": [
+        "broker::tests::broker_pubsub_roundtrip"
+      ]
     }
   ]
 }

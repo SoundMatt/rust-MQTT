@@ -69,15 +69,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 rust-mqtt version --format json
 rust-mqtt capabilities
 rust-mqtt status --format json
-rust-mqtt subscribe --topic sensors/# --format json
-rust-mqtt send --topic sensors/temp --payload 21.5
-rust-mqtt send --format json          # NDJSON crossbar sink (stdin)
+rust-mqtt subscribe --broker localhost:1883 --topic sensors/# --format json
+rust-mqtt send --broker localhost:1883 --topic sensors/temp --payload 21.5
+rust-mqtt send --format json --mock   # NDJSON crossbar sink (stdin), no live broker
 rust-mqtt convert --protocol MQTT     # relay interop driver (stdin → stdout)
 ```
 
+`send`/`subscribe` connect to `--broker` over TCP (MQTT v3.1.1) by default.
+Pass `--mock` to use the in-process mock broker instead — useful for local
+testing without a live broker.
+
 ---
 
-## RELAY compliance (v1.10)
+## RELAY compliance (v1.11)
 
 | Gate | Status |
 |---|---|
@@ -85,7 +89,7 @@ rust-mqtt convert --protocol MQTT     # relay interop driver (stdin → stdout)
 | `relay interop` | ✅ `convert` driver implemented |
 | `send --format json` NDJSON sink | ✅ Crossbar destination mode |
 | x-FuSa full lifecycle | ✅ `safety` CI job |
-| Requirements registry | ✅ `requirements.json` (80 requirements) |
+| Requirements registry | ✅ `requirements.json` (131 requirements) |
 | HARA / dFMEA / TARA | ✅ `fmea.json`, `tara.json` |
 | SBOM + provenance | ✅ `sbom.json`, `provenance.json` |
 
@@ -95,7 +99,7 @@ rust-mqtt convert --protocol MQTT     # relay interop driver (stdin → stdout)
 
 - Targeted standard: **ISO 26262 ASIL-B** / **IEC 61508 SIL 2**
 - All safety-relevant functions carry `//fusa:req REQ-xxx-NNN` annotations
-- Requirements defined in `requirements.json` (80 requirements, 7 families)
+- Requirements defined in `requirements.json` (131 requirements)
 - FMEA in `fmea.json`; TARA in `tara.json`
 - Safety case in `safety-case.json`
 - CI runs the full x-FuSa lifecycle (lint, analyze, check, trace, FMEA, TARA, qualify)
