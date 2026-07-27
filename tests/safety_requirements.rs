@@ -275,7 +275,9 @@ fn sub_back_pressure_drop_oldest() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let client = MockClient::new();
-        // DropOldest: when full, new messages win
+        // DropOldest: when full, drain the head of the queue and enqueue the
+        // arriving message (spec §10.5.3) — the surviving values must be the
+        // *newest* ones, not the oldest.
         let mut sub = client
             .subscribe(
                 "t",
@@ -291,12 +293,15 @@ fn sub_back_pressure_drop_oldest() {
             client.publish("t", QoS::AtMostOnce, vec![i]).await.unwrap();
         }
         tokio::task::yield_now().await;
-        let mut count = 0;
-        while timeout(Duration::from_millis(50), sub.recv()).await.is_ok() {
-            count += 1;
+        let mut received = vec![];
+        while let Ok(Some(m)) = timeout(Duration::from_millis(50), sub.recv()).await {
+            received.push(m.payload[0]);
         }
-        // Channel should not exceed depth; some messages are dropped
-        assert!(count <= 10, "count={}", count);
+        assert_eq!(
+            received,
+            vec![7, 8, 9],
+            "DropOldest must keep the newest values, not the oldest"
+        );
     });
 }
 
@@ -731,11 +736,12 @@ fn conn_lwt_encoded() {
 //fusa:req REQ-RELAY-015
 //fusa:req REQ-DIAG-001
 fn health_provider_status() {
+    use rust_mqtt::client::HealthState;
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let client = MockClient::new();
         let status = client.health().await;
-        assert!(status.healthy, "mock client must report healthy");
+        assert_eq!(status.status, HealthState::Ok, "mock client must report Ok");
     });
 }
 
@@ -751,10 +757,7 @@ fn metrics_provider_snapshot() {
             .await
             .unwrap();
         let snap = client.metrics().await;
-        assert!(
-            snap.messages_sent >= 1,
-            "messages_sent must count publishes"
-        );
+        assert!(snap.write_count >= 1, "write_count must count publishes");
     });
 }
 

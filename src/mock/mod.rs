@@ -32,11 +32,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex};
 
+use crate::backpressure::{self, RingSender};
 use crate::client::{
-    BackPressurePolicy, Client, Drainer, HealthProvider, HealthStatus, MetricsProvider,
-    MetricsSnapshot, SubscriberConfig, Subscription,
+    BackPressurePolicy, Client, Drainer, HealthProvider, HealthState, HealthStatus,
+    MetricsProvider, MetricsSnapshot, SubscriberConfig, Subscription,
 };
 use crate::error::Error;
 use crate::message::{Message, QoS};
@@ -46,28 +47,46 @@ use crate::topic::match_topic;
 // Internal subscription record
 // ---------------------------------------------------------------------------
 
+/// Outcome of pushing a message to one subscriber, used to drive
+/// `deliver_count`/`bytes_delivered`/`drop_count` per RELAY spec §9.1.
+struct PushOutcome {
+    /// The arriving message was successfully enqueued for this subscriber.
+    delivered: bool,
+    /// A message (arriving or evicted) was discarded by back-pressure.
+    dropped: bool,
+}
+
 struct SubRecord {
     filter: String,
-    tx: mpsc::Sender<Message>,
+    tx: RingSender<Message>,
     back_pressure: BackPressurePolicy,
 }
 
 impl SubRecord {
-    fn push(&self, msg: Message) {
+    async fn push(&self, msg: Message) -> PushOutcome {
         match self.back_pressure {
             BackPressurePolicy::DropOldest => {
-                if self.tx.try_send(msg.clone()).is_err() {
-                    let _ = self.tx.try_send(msg);
+                // §10.5.3: drain one message from the channel, then enqueue
+                // the new one — the arriving message is always delivered.
+                let evicted = self.tx.push_drop_oldest(msg).await;
+                PushOutcome {
+                    delivered: true,
+                    dropped: evicted,
                 }
             }
             BackPressurePolicy::Block => {
-                let tx = self.tx.clone();
-                tokio::spawn(async move {
-                    let _ = tx.send(msg).await;
-                });
+                self.tx.push_block(msg).await;
+                PushOutcome {
+                    delivered: true,
+                    dropped: false,
+                }
             }
-            _ => {
-                let _ = self.tx.try_send(msg);
+            BackPressurePolicy::DropNewest => {
+                let delivered = self.tx.push_drop_newest(msg).await;
+                PushOutcome {
+                    delivered,
+                    dropped: !delivered,
+                }
             }
         }
     }
@@ -82,10 +101,12 @@ struct BrokerState {
     subs: Mutex<HashMap<u64, SubRecord>>,
     retained: Mutex<HashMap<String, Message>>,
     next_id: AtomicU64,
-    msgs_sent: AtomicU64,
-    msgs_received: AtomicU64,
-    bytes_sent: AtomicU64,
-    errors: AtomicU64,
+    write_count: AtomicU64,
+    deliver_count: AtomicU64,
+    drop_count: AtomicU64,
+    bytes_written: AtomicU64,
+    bytes_delivered: AtomicU64,
+    error_count: AtomicU64,
 }
 
 impl BrokerState {
@@ -95,10 +116,12 @@ impl BrokerState {
             subs: Mutex::new(HashMap::new()),
             retained: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
-            msgs_sent: AtomicU64::new(0),
-            msgs_received: AtomicU64::new(0),
-            bytes_sent: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
+            write_count: AtomicU64::new(0),
+            deliver_count: AtomicU64::new(0),
+            drop_count: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+            bytes_delivered: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
         })
     }
 }
@@ -145,7 +168,7 @@ impl MockClient {
         let subs = self.state.subs.lock().await;
         for sub in subs.values() {
             if match_topic(&sub.filter, &msg.topic) {
-                sub.push(msg.clone());
+                sub.push(msg.clone()).await;
             }
         }
     }
@@ -178,11 +201,11 @@ impl Client for MockClient {
     //fusa:req REQ-PUB-002
     async fn publish(&self, topic: &str, _qos: QoS, payload: Vec<u8>) -> Result<(), Error> {
         if self.state.closed.load(Ordering::SeqCst) {
-            self.state.errors.fetch_add(1, Ordering::Relaxed);
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
         }
         if topic.is_empty() {
-            self.state.errors.fetch_add(1, Ordering::Relaxed);
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
         }
 
@@ -194,14 +217,24 @@ impl Client for MockClient {
             ..Default::default()
         };
 
-        self.state.msgs_sent.fetch_add(1, Ordering::Relaxed);
-        self.state.bytes_sent.fetch_add(len, Ordering::Relaxed);
+        // §9.1 WriteCount/BytesWritten: counted once per accepted call,
+        // never per subscriber.
+        self.state.write_count.fetch_add(1, Ordering::Relaxed);
+        self.state.bytes_written.fetch_add(len, Ordering::Relaxed);
 
         let subs = self.state.subs.lock().await;
         for sub in subs.values() {
             if match_topic(&sub.filter, topic) {
-                sub.push(msg.clone());
-                self.state.msgs_received.fetch_add(1, Ordering::Relaxed);
+                // §9.1 DeliverCount/BytesDelivered/DropCount: counted once
+                // per affected subscriber.
+                let outcome = sub.push(msg.clone()).await;
+                if outcome.delivered {
+                    self.state.deliver_count.fetch_add(1, Ordering::Relaxed);
+                    self.state.bytes_delivered.fetch_add(len, Ordering::Relaxed);
+                }
+                if outcome.dropped {
+                    self.state.drop_count.fetch_add(1, Ordering::Relaxed);
+                }
             }
         }
         Ok(())
@@ -211,9 +244,11 @@ impl Client for MockClient {
     //fusa:req REQ-PUB-004
     async fn publish_retained(&self, topic: &str, qos: QoS, payload: Vec<u8>) -> Result<(), Error> {
         if self.state.closed.load(Ordering::SeqCst) {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
         }
         if topic.is_empty() {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
         }
 
@@ -250,14 +285,16 @@ impl Client for MockClient {
         config: SubscriberConfig,
     ) -> Result<Subscription, Error> {
         if self.state.closed.load(Ordering::SeqCst) {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
         }
         if topic_filter.is_empty() {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
         }
 
         let depth = config.chan_depth(64);
-        let (tx, rx) = mpsc::channel::<Message>(depth);
+        let (tx, rx) = backpressure::channel::<Message>(depth);
         let id = self.state.next_id.fetch_add(1, Ordering::SeqCst);
 
         let record = SubRecord {
@@ -275,7 +312,7 @@ impl Client for MockClient {
             if let Some(sub) = subs.get(&id) {
                 for (topic, msg) in retained.iter() {
                     if match_topic(topic_filter, topic) {
-                        sub.push(msg.clone());
+                        sub.push(msg.clone()).await;
                     }
                 }
             }
@@ -316,11 +353,16 @@ impl Drainer for MockClient {
 #[async_trait]
 impl HealthProvider for MockClient {
     async fn health(&self) -> HealthStatus {
+        let closed = self.state.closed.load(Ordering::SeqCst);
         HealthStatus {
-            healthy: !self.state.closed.load(Ordering::SeqCst),
-            connected: !self.state.closed.load(Ordering::SeqCst),
+            status: if closed {
+                HealthState::Down
+            } else {
+                HealthState::Ok
+            },
+            details: String::new(),
+            connected: !closed,
             endpoint: "mock://in-process".into(),
-            details: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -329,12 +371,12 @@ impl HealthProvider for MockClient {
 impl MetricsProvider for MockClient {
     async fn metrics(&self) -> MetricsSnapshot {
         MetricsSnapshot {
-            messages_sent: self.state.msgs_sent.load(Ordering::Relaxed),
-            messages_received: self.state.msgs_received.load(Ordering::Relaxed),
-            bytes_sent: self.state.bytes_sent.load(Ordering::Relaxed),
-            bytes_received: 0,
-            active_subscriptions: self.state.subs.try_lock().map(|s| s.len()).unwrap_or(0),
-            errors: self.state.errors.load(Ordering::Relaxed),
+            write_count: self.state.write_count.load(Ordering::Relaxed),
+            deliver_count: self.state.deliver_count.load(Ordering::Relaxed),
+            drop_count: self.state.drop_count.load(Ordering::Relaxed),
+            bytes_written: self.state.bytes_written.load(Ordering::Relaxed),
+            bytes_delivered: self.state.bytes_delivered.load(Ordering::Relaxed),
+            error_count: self.state.error_count.load(Ordering::Relaxed),
         }
     }
 }
@@ -535,15 +577,64 @@ mod tests {
     async fn health_and_metrics() {
         let client = MockClient::new();
         let h = client.health().await;
-        assert!(h.healthy);
+        assert_eq!(h.status, crate::client::HealthState::Ok);
         assert!(h.connected);
 
+        let mut sub = client
+            .subscribe("t", QoS::AtMostOnce, SubscriberConfig::default())
+            .await
+            .unwrap();
         client
             .publish("t", QoS::AtMostOnce, b"x".to_vec())
             .await
             .unwrap();
+        timeout(Duration::from_secs(1), sub.recv())
+            .await
+            .unwrap()
+            .unwrap();
+
         let m = client.metrics().await;
-        assert_eq!(m.messages_sent, 1);
+        assert_eq!(m.write_count, 1);
+        assert_eq!(m.bytes_written, 1);
+        assert_eq!(m.deliver_count, 1);
+        assert_eq!(m.bytes_delivered, 1);
+        assert_eq!(m.error_count, 0);
+    }
+
+    #[tokio::test]
+    async fn metrics_track_drops_and_errors() {
+        let client = MockClient::new();
+        let _sub = client
+            .subscribe(
+                "t",
+                QoS::AtMostOnce,
+                SubscriberConfig {
+                    channel_depth: 1,
+                    back_pressure: BackPressurePolicy::DropNewest,
+                },
+            )
+            .await
+            .unwrap();
+        client
+            .publish("t", QoS::AtMostOnce, b"1".to_vec())
+            .await
+            .unwrap();
+        client
+            .publish("t", QoS::AtMostOnce, b"2".to_vec())
+            .await
+            .unwrap();
+
+        let m = client.metrics().await;
+        assert_eq!(m.write_count, 2);
+        assert_eq!(m.deliver_count, 1, "second delivery should be dropped");
+        assert_eq!(m.drop_count, 1);
+
+        let err = client
+            .publish("", QoS::AtMostOnce, vec![])
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::TopicEmpty));
+        assert_eq!(client.metrics().await.error_count, 1);
     }
 
     #[tokio::test]

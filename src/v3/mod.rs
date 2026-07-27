@@ -6,8 +6,9 @@
 //! MQTT v3.1.1 TCP client.
 //!
 //! Connects to any MQTT broker (Mosquitto, HiveMQ, EMQX, …) via TCP.
-//! Supports QoS 0, 1, and 2; keepalive; clean-session; username/password;
-//! last-will-and-testament (LWT); and TLS/mTLS (with the `tls` feature).
+//! Supports QoS 0, 1, and 2 (full PUBLISH→PUBREC→PUBREL→PUBCOMP handshake);
+//! keepalive; clean-session; username/password; last-will-and-testament
+//! (LWT); and TLS/mTLS (with the `tls` feature).
 //!
 //! # Example
 //! ```rust,no_run
@@ -27,7 +28,7 @@
 //! ```
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -37,9 +38,10 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
 
+use crate::backpressure::{self, RingSender};
 use crate::client::{
-    BackPressurePolicy, HealthProvider, HealthStatus, MetricsProvider, MetricsSnapshot,
-    SubscriberConfig, Subscription,
+    BackPressurePolicy, HealthProvider, HealthState, HealthStatus, MetricsProvider,
+    MetricsSnapshot, SubscriberConfig, Subscription,
 };
 use crate::error::Error;
 use crate::message::{Message, QoS};
@@ -47,8 +49,8 @@ use crate::topic::match_topic;
 
 mod packet;
 use packet::{
-    build_connect, build_disconnect, build_pingreq, build_publish, build_subscribe,
-    build_unsubscribe, PacketType,
+    build_connect, build_disconnect, build_pingreq, build_pubcomp, build_publish, build_pubrec,
+    build_pubrel, build_subscribe, build_unsubscribe, PacketType,
 };
 
 // ---------------------------------------------------------------------------
@@ -135,30 +137,46 @@ impl ConnectOptions {
 // SubRecord
 // ---------------------------------------------------------------------------
 
+/// Outcome of pushing a message to one subscriber, used to drive
+/// `deliver_count`/`bytes_delivered`/`drop_count` per RELAY spec §9.1.
+struct PushOutcome {
+    delivered: bool,
+    dropped: bool,
+}
+
 struct SubRecord {
     filter: String,
-    tx: mpsc::Sender<Message>,
+    tx: RingSender<Message>,
     back_pressure: BackPressurePolicy,
     #[allow(dead_code)]
     unsub_rx: Option<oneshot::Receiver<String>>,
 }
 
 impl SubRecord {
-    fn push(&self, msg: Message) {
+    async fn push(&self, msg: Message) -> PushOutcome {
         match self.back_pressure {
             BackPressurePolicy::DropOldest => {
-                if self.tx.try_send(msg.clone()).is_err() {
-                    let _ = self.tx.try_send(msg);
+                // §10.5.3: drain one message from the channel, then enqueue
+                // the new one — the arriving message is always delivered.
+                let evicted = self.tx.push_drop_oldest(msg).await;
+                PushOutcome {
+                    delivered: true,
+                    dropped: evicted,
                 }
             }
             BackPressurePolicy::Block => {
-                let tx = self.tx.clone();
-                tokio::spawn(async move {
-                    let _ = tx.send(msg).await;
-                });
+                self.tx.push_block(msg).await;
+                PushOutcome {
+                    delivered: true,
+                    dropped: false,
+                }
             }
-            _ => {
-                let _ = self.tx.try_send(msg);
+            BackPressurePolicy::DropNewest => {
+                let delivered = self.tx.push_drop_newest(msg).await;
+                PushOutcome {
+                    delivered,
+                    dropped: !delivered,
+                }
             }
         }
     }
@@ -175,7 +193,19 @@ struct ClientState {
     next_packet_id: AtomicU16,
     // QoS 1 in-flight PUBACK waiters: packet_id → oneshot sender
     puback_waiters: Mutex<HashMap<u16, oneshot::Sender<()>>>,
+    // QoS 2 in-flight PUBREC/PUBCOMP waiters (we are the sender): packet_id → oneshot sender
+    pubrec_waiters: Mutex<HashMap<u16, oneshot::Sender<()>>>,
+    pubcomp_waiters: Mutex<HashMap<u16, oneshot::Sender<()>>>,
+    // QoS 2 inbound messages awaiting PUBREL (we are the receiver): packet_id → held message
+    incoming_qos2: Mutex<HashMap<u16, Message>>,
     endpoint: String,
+    // RELAY spec §9.1 metrics counters.
+    write_count: AtomicU64,
+    deliver_count: AtomicU64,
+    drop_count: AtomicU64,
+    bytes_written: AtomicU64,
+    bytes_delivered: AtomicU64,
+    error_count: AtomicU64,
 }
 
 impl ClientState {
@@ -186,7 +216,16 @@ impl ClientState {
             next_sub_id: std::sync::atomic::AtomicU64::new(1),
             next_packet_id: AtomicU16::new(1),
             puback_waiters: Mutex::new(HashMap::new()),
+            pubrec_waiters: Mutex::new(HashMap::new()),
+            pubcomp_waiters: Mutex::new(HashMap::new()),
+            incoming_qos2: Mutex::new(HashMap::new()),
             endpoint,
+            write_count: AtomicU64::new(0),
+            deliver_count: AtomicU64::new(0),
+            drop_count: AtomicU64::new(0),
+            bytes_written: AtomicU64::new(0),
+            bytes_delivered: AtomicU64::new(0),
+            error_count: AtomicU64::new(0),
         })
     }
 
@@ -334,12 +373,47 @@ async fn run_read_loop(
 
         match pkt_type {
             PacketType::Publish => {
-                handle_publish(&state, flags, &body).await;
+                handle_publish(&state, &writer_tx, flags, &body).await;
             }
             PacketType::Puback => {
                 if body.len() >= 2 {
                     let pid = u16::from_be_bytes([body[0], body[1]]);
                     let mut waiters = state.puback_waiters.lock().await;
+                    if let Some(tx) = waiters.remove(&pid) {
+                        let _ = tx.send(());
+                    }
+                }
+            }
+            PacketType::Pubrec => {
+                // We are the sender of a QoS 2 PUBLISH: reply PUBREL and
+                // wake whoever is waiting on the PUBREC step of publish().
+                if body.len() >= 2 {
+                    let pid = u16::from_be_bytes([body[0], body[1]]);
+                    let mut waiters = state.pubrec_waiters.lock().await;
+                    if let Some(tx) = waiters.remove(&pid) {
+                        let _ = tx.send(());
+                    }
+                }
+            }
+            PacketType::Pubrel => {
+                // We are the receiver of a QoS 2 PUBLISH: release the
+                // message held since PUBREC, deliver it exactly once, and
+                // reply PUBCOMP (MQTT v3.1.1 §3.6).
+                if body.len() >= 2 {
+                    let pid = u16::from_be_bytes([body[0], body[1]]);
+                    let held = state.incoming_qos2.lock().await.remove(&pid);
+                    if let Some(msg) = held {
+                        deliver_to_subs(&state, msg).await;
+                    }
+                    let _ = writer_tx.try_send(build_pubcomp(pid));
+                }
+            }
+            PacketType::Pubcomp => {
+                // We are the sender of a QoS 2 PUBLISH: the handshake is
+                // complete; wake whoever is waiting in publish().
+                if body.len() >= 2 {
+                    let pid = u16::from_be_bytes([body[0], body[1]]);
+                    let mut waiters = state.pubcomp_waiters.lock().await;
                     if let Some(tx) = waiters.remove(&pid) {
                         let _ = tx.send(());
                     }
@@ -358,7 +432,31 @@ async fn run_read_loop(
     state.closed.store(true, Ordering::SeqCst);
 }
 
-async fn handle_publish(state: &Arc<ClientState>, flags: u8, body: &[u8]) {
+/// Deliver `msg` to every subscription whose filter matches its topic,
+/// updating the §9.1 `DeliverCount`/`BytesDelivered`/`DropCount` counters.
+async fn deliver_to_subs(state: &Arc<ClientState>, msg: Message) {
+    let len = msg.payload.len() as u64;
+    let subs = state.subs.lock().await;
+    for sub in subs.values() {
+        if match_topic(&sub.filter, &msg.topic) {
+            let outcome = sub.push(msg.clone()).await;
+            if outcome.delivered {
+                state.deliver_count.fetch_add(1, Ordering::Relaxed);
+                state.bytes_delivered.fetch_add(len, Ordering::Relaxed);
+            }
+            if outcome.dropped {
+                state.drop_count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+async fn handle_publish(
+    state: &Arc<ClientState>,
+    writer_tx: &mpsc::Sender<Vec<u8>>,
+    flags: u8,
+    body: &[u8],
+) {
     let qos_bits = (flags >> 1) & 0x03;
     let retained = flags & 0x01 != 0;
 
@@ -398,12 +496,16 @@ async fn handle_publish(state: &Arc<ClientState>, flags: u8, body: &[u8]) {
         ..Default::default()
     };
 
-    let subs = state.subs.lock().await;
-    for sub in subs.values() {
-        if match_topic(&sub.filter, &topic) {
-            sub.push(msg.clone());
-        }
+    if qos_bits == 2 {
+        // MQTT v3.1.1 §3.3: hold the message and reply PUBREC; only deliver
+        // it once PUBREL arrives, so a retransmitted PUBLISH is not
+        // delivered twice.
+        state.incoming_qos2.lock().await.insert(packet_id, msg);
+        let _ = writer_tx.try_send(build_pubrec(packet_id));
+        return;
     }
+
+    deliver_to_subs(state, msg).await;
 }
 
 async fn read_connack(r: &mut tokio::net::tcp::OwnedReadHalf) -> Result<u8, Error> {
@@ -463,11 +565,14 @@ impl crate::client::Client for Client {
     //fusa:req REQ-PUB-002
     //fusa:req REQ-PUB-005
     //fusa:req REQ-PUB-006
+    //fusa:req REQ-QOS-003
     async fn publish(&self, topic: &str, qos: QoS, payload: Vec<u8>) -> Result<(), Error> {
         if self.state.closed.load(Ordering::SeqCst) {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
         }
         if topic.is_empty() {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
         }
 
@@ -478,20 +583,64 @@ impl crate::client::Client for Client {
         };
 
         let pkt = build_publish(topic, &payload, qos, false, pid);
-        self.send_raw(pkt)?;
-
-        // QoS 1: wait for PUBACK
-        if qos == QoS::AtLeastOnce {
-            let pid = pid.unwrap();
-            let (tx, rx) = oneshot::channel();
-            self.state.puback_waiters.lock().await.insert(pid, tx);
-            timeout(Duration::from_secs(30), rx)
-                .await
-                .map_err(|_| Error::Timeout)?
-                .map_err(|_| Error::Protocol("PUBACK channel dropped".into()))?;
+        if let Err(e) = self.send_raw(pkt) {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
+            return Err(e);
         }
 
-        Ok(())
+        let result = match qos {
+            QoS::AtMostOnce => Ok(()),
+            QoS::AtLeastOnce => {
+                let pid = pid.unwrap();
+                let (tx, rx) = oneshot::channel();
+                self.state.puback_waiters.lock().await.insert(pid, tx);
+                timeout(Duration::from_secs(30), rx)
+                    .await
+                    .map_err(|_| Error::Timeout)
+                    .and_then(|r| r.map_err(|_| Error::Protocol("PUBACK channel dropped".into())))
+            }
+            QoS::ExactlyOnce => {
+                // MQTT v3.1.1 §4.3.3: PUBLISH → PUBREC → PUBREL → PUBCOMP.
+                let pid = pid.unwrap();
+                let (rec_tx, rec_rx) = oneshot::channel();
+                self.state.pubrec_waiters.lock().await.insert(pid, rec_tx);
+                let waited_rec = timeout(Duration::from_secs(30), rec_rx)
+                    .await
+                    .map_err(|_| Error::Timeout)
+                    .and_then(|r| r.map_err(|_| Error::Protocol("PUBREC channel dropped".into())));
+                if let Err(e) = waited_rec {
+                    self.state.pubrec_waiters.lock().await.remove(&pid);
+                    Err(e)
+                } else {
+                    let (comp_tx, comp_rx) = oneshot::channel();
+                    self.state.pubcomp_waiters.lock().await.insert(pid, comp_tx);
+                    if let Err(e) = self.send_raw(build_pubrel(pid)) {
+                        self.state.pubcomp_waiters.lock().await.remove(&pid);
+                        Err(e)
+                    } else {
+                        timeout(Duration::from_secs(30), comp_rx)
+                            .await
+                            .map_err(|_| Error::Timeout)
+                            .and_then(|r| {
+                                r.map_err(|_| Error::Protocol("PUBCOMP channel dropped".into()))
+                            })
+                    }
+                }
+            }
+        };
+
+        match &result {
+            Ok(()) => {
+                self.state.write_count.fetch_add(1, Ordering::Relaxed);
+                self.state
+                    .bytes_written
+                    .fetch_add(payload.len() as u64, Ordering::Relaxed);
+            }
+            Err(_) => {
+                self.state.error_count.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        result
     }
 
     //fusa:req REQ-SUB-001
@@ -505,9 +654,11 @@ impl crate::client::Client for Client {
         config: SubscriberConfig,
     ) -> Result<Subscription, Error> {
         if self.state.closed.load(Ordering::SeqCst) {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
         }
         if topic_filter.is_empty() {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
         }
 
@@ -516,7 +667,7 @@ impl crate::client::Client for Client {
         self.send_raw(pkt)?;
 
         let depth = config.chan_depth(64);
-        let (tx, rx) = mpsc::channel::<Message>(depth);
+        let (tx, rx) = backpressure::channel::<Message>(depth);
         let id = self.state.next_sub_id.fetch_add(1, Ordering::SeqCst);
 
         let (unsub_tx, unsub_rx) = oneshot::channel();
@@ -568,11 +719,16 @@ impl crate::client::Client for Client {
 #[async_trait]
 impl HealthProvider for Client {
     async fn health(&self) -> HealthStatus {
+        let closed = self.state.closed.load(Ordering::SeqCst);
         HealthStatus {
-            healthy: !self.state.closed.load(Ordering::SeqCst),
-            connected: !self.state.closed.load(Ordering::SeqCst),
+            status: if closed {
+                HealthState::Down
+            } else {
+                HealthState::Ok
+            },
+            details: String::new(),
+            connected: !closed,
             endpoint: self.state.endpoint.clone(),
-            details: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -580,6 +736,13 @@ impl HealthProvider for Client {
 #[async_trait]
 impl MetricsProvider for Client {
     async fn metrics(&self) -> MetricsSnapshot {
-        MetricsSnapshot::default()
+        MetricsSnapshot {
+            write_count: self.state.write_count.load(Ordering::Relaxed),
+            deliver_count: self.state.deliver_count.load(Ordering::Relaxed),
+            drop_count: self.state.drop_count.load(Ordering::Relaxed),
+            bytes_written: self.state.bytes_written.load(Ordering::Relaxed),
+            bytes_delivered: self.state.bytes_delivered.load(Ordering::Relaxed),
+            error_count: self.state.error_count.load(Ordering::Relaxed),
+        }
     }
 }

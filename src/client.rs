@@ -6,8 +6,8 @@
 //! Client and Subscription traits.
 
 use async_trait::async_trait;
-use tokio::sync::mpsc;
 
+use crate::backpressure::RingReceiver;
 use crate::error::Error;
 use crate::message::{Message, QoS};
 
@@ -65,14 +65,14 @@ impl SubscriberConfig {
 //fusa:req REQ-SUB-002
 //fusa:req REQ-SUB-003
 pub struct Subscription {
-    pub(crate) rx: mpsc::Receiver<Message>,
+    pub(crate) rx: RingReceiver<Message>,
     pub(crate) topic: String,
     pub(crate) unsubscribe_tx: Option<tokio::sync::oneshot::Sender<String>>,
 }
 
 impl Subscription {
     /// Borrow the message channel.
-    pub fn receiver(&mut self) -> &mut mpsc::Receiver<Message> {
+    pub fn receiver(&mut self) -> &mut RingReceiver<Message> {
         &mut self.rx
     }
 
@@ -165,13 +165,30 @@ pub trait HealthProvider {
     async fn health(&self) -> HealthStatus;
 }
 
+/// Health state per RELAY spec §9 `HealthStatus` (`HealthOK`/`HealthDegraded`/`HealthDown`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HealthState {
+    Ok,
+    Degraded,
+    #[default]
+    Down,
+}
+
 /// Health status report from `HealthProvider`.
-#[derive(Clone, Debug, serde::Serialize)]
+///
+/// `status` and `details` mirror the RELAY spec §9 canonical `Health{Status,
+/// Details}` shape field-for-field so that cross-implementation tooling
+/// (`relay report`, `relay compare`) can compare rust-mqtt's health against
+/// implementations of other x-Net protocols. `connected`/`endpoint` are
+/// implementation-specific extras beyond the canonical shape.
+#[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct HealthStatus {
-    pub healthy: bool,
+    pub status: HealthState,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub details: String,
     pub connected: bool,
     pub endpoint: String,
-    pub details: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Optional metrics interface (RELAY spec §9).
@@ -182,12 +199,25 @@ pub trait MetricsProvider {
 }
 
 /// Point-in-time metrics snapshot.
+///
+/// Field names and per-field counting semantics mirror the RELAY spec §9.1
+/// `Metrics` table exactly, so that two implementations of different
+/// protocols report comparable numbers.
 #[derive(Clone, Debug, Default, serde::Serialize)]
 pub struct MetricsSnapshot {
-    pub messages_sent: u64,
-    pub messages_received: u64,
-    pub bytes_sent: u64,
-    pub bytes_received: u64,
-    pub active_subscriptions: usize,
-    pub errors: u64,
+    /// One per accepted `publish()` call that returns without error.
+    pub write_count: u64,
+    /// One per successful enqueue onto a subscriber delivery channel,
+    /// counted once per receiving subscriber.
+    pub deliver_count: u64,
+    /// One per sample discarded by back-pressure when a subscriber channel
+    /// is full, counted once per affected subscriber.
+    pub drop_count: u64,
+    /// Sum of `payload.len()` (application payload only) over the sends
+    /// counted by `write_count`.
+    pub bytes_written: u64,
+    /// Sum of `payload.len()` over the deliveries counted by `deliver_count`.
+    pub bytes_delivered: u64,
+    /// One per node operation that returns an error.
+    pub error_count: u64,
 }

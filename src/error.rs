@@ -66,12 +66,18 @@ impl From<crate::relay::Error> for Error {
 
 impl Error {
     /// Return the RELAY sentinel this error maps to, if any.
+    ///
+    /// Per spec §5.4, `TopicEmpty` and `QoSUnsupported` both wrap
+    /// `relay::Error::NotConnected` so generic sentinel-checking code (e.g.
+    /// the `Adapt()` layer, §5.2) reaches the appropriate sentinel.
     pub fn kind(&self) -> Option<crate::relay::Error> {
         match self {
             Error::Closed => Some(crate::relay::Error::Closed),
             Error::NotConnected => Some(crate::relay::Error::NotConnected),
             Error::Timeout => Some(crate::relay::Error::Timeout),
             Error::PayloadTooLarge => Some(crate::relay::Error::PayloadTooLarge),
+            Error::TopicEmpty => Some(crate::relay::Error::NotConnected),
+            Error::QoSUnsupported => Some(crate::relay::Error::NotConnected),
             _ => None,
         }
     }
@@ -94,9 +100,19 @@ mod tests {
     }
 
     #[test]
-    fn topic_empty_kind_is_none() {
+    //fusa:req REQ-MQTT-009
+    fn topic_empty_wraps_not_connected() {
+        // §5.4: MQTT ErrTopicEmpty wraps ErrNotConnected.
         let e = Error::TopicEmpty;
-        assert!(e.kind().is_none());
+        assert_eq!(e.kind(), Some(crate::relay::Error::NotConnected));
+    }
+
+    #[test]
+    //fusa:req REQ-QOS-005
+    fn qos_unsupported_wraps_not_connected() {
+        // §5.4: MQTT ErrQoSUnsupported wraps ErrNotConnected.
+        let e = Error::QoSUnsupported;
+        assert_eq!(e.kind(), Some(crate::relay::Error::NotConnected));
     }
 
     #[test]

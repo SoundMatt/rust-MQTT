@@ -73,6 +73,7 @@ pub(crate) mod base64_serde;
 pub(crate) mod base64_serde_opt;
 
 pub mod adapt;
+pub mod backpressure;
 pub mod broker;
 pub mod client;
 pub mod error;

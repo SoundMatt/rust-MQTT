@@ -208,6 +208,31 @@ pub fn build_unsubscribe(filter: &str, packet_id: u16) -> Vec<u8> {
     packet_with_header(10, 0x02, &body)
 }
 
+// ---------------------------------------------------------------------------
+// QoS 2 handshake: PUBREC / PUBREL / PUBCOMP
+// ---------------------------------------------------------------------------
+
+/// Build a PUBREC packet (receiver → sender, acknowledges receipt of a QoS 2
+/// PUBLISH; MQTT v3.1.1 §3.5).
+pub fn build_pubrec(packet_id: u16) -> Vec<u8> {
+    let body = [(packet_id >> 8) as u8, packet_id as u8];
+    packet_with_header(5, 0, &body)
+}
+
+/// Build a PUBREL packet (sender → receiver, releases a QoS 2 PUBLISH after
+/// PUBREC; MQTT v3.1.1 §3.6). Fixed header flags MUST be `0b0010` (reserved).
+pub fn build_pubrel(packet_id: u16) -> Vec<u8> {
+    let body = [(packet_id >> 8) as u8, packet_id as u8];
+    packet_with_header(6, 0x02, &body)
+}
+
+/// Build a PUBCOMP packet (receiver → sender, completes a QoS 2 exchange
+/// after PUBREL; MQTT v3.1.1 §3.7).
+pub fn build_pubcomp(packet_id: u16) -> Vec<u8> {
+    let body = [(packet_id >> 8) as u8, packet_id as u8];
+    packet_with_header(7, 0, &body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +284,25 @@ mod tests {
     fn pingreq_packet() {
         let pkt = build_pingreq();
         assert_eq!(pkt, vec![0xC0, 0x00]);
+    }
+
+    #[test]
+    fn pubrec_packet() {
+        let pkt = build_pubrec(0x1234);
+        assert_eq!(pkt, vec![0x50, 0x02, 0x12, 0x34]);
+    }
+
+    #[test]
+    fn pubrel_packet_has_reserved_flags() {
+        let pkt = build_pubrel(0x0001);
+        // PUBREL fixed header flags MUST be 0b0010.
+        assert_eq!(pkt, vec![0x62, 0x02, 0x00, 0x01]);
+    }
+
+    #[test]
+    fn pubcomp_packet() {
+        let pkt = build_pubcomp(0x0042);
+        assert_eq!(pkt, vec![0x70, 0x02, 0x00, 0x42]);
     }
 
     #[test]

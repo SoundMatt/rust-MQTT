@@ -8,13 +8,21 @@
 //! Implements §10.3, §10.4, §10.5, and §15.7.4 of the RELAY spec.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
+use crate::backpressure;
 use crate::client::{BackPressurePolicy, Client, SubscriberConfig};
 use crate::message::{Message, QoS};
 use crate::relay::{self, Context, Error as RelayError, Node, Protocol, SubscriberOptions};
+
+/// How often `send()` polls `ctx.done()` while waiting on the underlying
+/// publish. `relay::Context` only exposes a point-in-time `done()` check
+/// (spec §18.3), not a duration, so cancellation is observed by polling at
+/// this interval rather than sleeping until an exact instant.
+const CTX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 // ---------------------------------------------------------------------------
 // NodeAdapter
@@ -30,16 +38,31 @@ impl<C: Client> Node for NodeAdapter<C> {
         Protocol::Mqtt
     }
 
-    async fn send(&self, _ctx: Context, msg: relay::Message) -> Result<(), RelayError> {
+    //fusa:req REQ-RELAY-007
+    async fn send(&self, ctx: Context, msg: relay::Message) -> Result<(), RelayError> {
         let qos = match msg.meta.get("mqtt.qos").map(|s| s.as_str()) {
             Some("1") => QoS::AtLeastOnce,
             Some("2") => QoS::ExactlyOnce,
             _ => QoS::AtMostOnce,
         };
-        self.client
-            .publish(&msg.id, qos, msg.payload)
-            .await
-            .map_err(|_| RelayError::NotConnected)
+
+        let publish = self.client.publish(&msg.id, qos, msg.payload);
+        tokio::pin!(publish);
+        loop {
+            tokio::select! {
+                res = &mut publish => {
+                    // §5.2: preserve the underlying error's real sentinel
+                    // instead of blindly collapsing every failure to
+                    // NotConnected.
+                    return res.map_err(|e| e.kind().unwrap_or(RelayError::NotConnected));
+                }
+                _ = tokio::time::sleep(CTX_POLL_INTERVAL) => {
+                    if ctx.done() {
+                        return Err(RelayError::Timeout);
+                    }
+                }
+            }
+        }
     }
 
     async fn subscribe(
@@ -61,26 +84,38 @@ impl<C: Client> Node for NodeAdapter<C> {
             .client
             .subscribe("#", QoS::AtMostOnce, cfg)
             .await
-            .map_err(|_| RelayError::NotConnected)?;
+            .map_err(|e| e.kind().unwrap_or(RelayError::NotConnected))?;
 
-        let (tx, rx) = mpsc::channel::<relay::Message>(depth);
+        // relay::Node::subscribe (spec §18.3) must return a literal
+        // tokio::sync::mpsc::Receiver, whose sending half cannot evict a
+        // queued item once handed to the caller. So `DropOldest` is applied
+        // correctly on an intermediate ring buffer (§10.5.3) that this task
+        // owns end-to-end; the final stage below just forwards in order.
+        let (ring_tx, mut ring_rx) = backpressure::channel::<relay::Message>(depth);
         let back_pressure = opts.back_pressure;
-
         tokio::spawn(async move {
             while let Some(m) = sub.recv().await {
                 let rm = m.to_relay_message();
                 match back_pressure {
                     relay::BackPressurePolicy::DropOldest => {
-                        if tx.try_send(rm.clone()).is_err() {
-                            let _ = tx.try_send(rm);
-                        }
+                        ring_tx.push_drop_oldest(rm).await;
                     }
                     relay::BackPressurePolicy::Block => {
-                        let _ = tx.send(rm).await;
+                        ring_tx.push_block(rm).await;
                     }
-                    _ => {
-                        let _ = tx.try_send(rm);
+                    relay::BackPressurePolicy::DropNewest => {
+                        ring_tx.push_drop_newest(rm).await;
                     }
+                }
+            }
+            ring_tx.close();
+        });
+
+        let (tx, rx) = mpsc::channel::<relay::Message>(depth);
+        tokio::spawn(async move {
+            while let Some(rm) = ring_rx.recv().await {
+                if tx.send(rm).await.is_err() {
+                    break;
                 }
             }
         });
@@ -89,7 +124,10 @@ impl<C: Client> Node for NodeAdapter<C> {
     }
 
     async fn close(&self) -> Result<(), RelayError> {
-        self.client.close().await.map_err(|_| RelayError::Closed)
+        self.client
+            .close()
+            .await
+            .map_err(|e| e.kind().unwrap_or(RelayError::Closed))
     }
 }
 
@@ -154,5 +192,89 @@ mod tests {
         assert_eq!(m2.payload, m.payload);
         assert_eq!(m2.qos, m.qos);
         assert_eq!(m2.retained, m.retained);
+    }
+
+    /// A `Client` whose `publish` never completes, so `send()`'s only way to
+    /// return is by honoring `ctx.done()` (spec §18.3, §6 requirement 5).
+    struct NeverRespondClient;
+
+    #[async_trait]
+    impl Client for NeverRespondClient {
+        async fn publish(
+            &self,
+            _topic: &str,
+            _qos: QoS,
+            _payload: Vec<u8>,
+        ) -> Result<(), crate::error::Error> {
+            std::future::pending::<()>().await;
+            unreachable!("pending future never resolves")
+        }
+
+        async fn subscribe(
+            &self,
+            _topic_filter: &str,
+            _qos: QoS,
+            _config: SubscriberConfig,
+        ) -> Result<crate::client::Subscription, crate::error::Error> {
+            Err(crate::error::Error::NotConnected)
+        }
+
+        async fn close(&self) -> Result<(), crate::error::Error> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn send_honors_ctx_timeout() {
+        let node = adapt(NeverRespondClient);
+        let msg = relay::Message::new(Protocol::Mqtt, "t", b"x".to_vec());
+        let start = std::time::Instant::now();
+        let res = node
+            .send(Context::with_timeout(Duration::from_millis(50)), msg)
+            .await;
+        assert!(
+            matches!(res, Err(RelayError::Timeout)),
+            "expected Timeout, got {:?}",
+            res
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "send() must return promptly after ctx deadline expires"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_preserves_real_error_kind() {
+        // §5.2: Adapt() must not blindly collapse every close() failure to
+        // RelayError::Closed when the underlying error maps to a different
+        // sentinel.
+        struct TimeoutOnCloseClient;
+
+        #[async_trait]
+        impl Client for TimeoutOnCloseClient {
+            async fn publish(
+                &self,
+                _topic: &str,
+                _qos: QoS,
+                _payload: Vec<u8>,
+            ) -> Result<(), crate::error::Error> {
+                Ok(())
+            }
+            async fn subscribe(
+                &self,
+                _topic_filter: &str,
+                _qos: QoS,
+                _config: SubscriberConfig,
+            ) -> Result<crate::client::Subscription, crate::error::Error> {
+                Err(crate::error::Error::NotConnected)
+            }
+            async fn close(&self) -> Result<(), crate::error::Error> {
+                Err(crate::error::Error::Timeout)
+            }
+        }
+
+        let node = adapt(TimeoutOnCloseClient);
+        let res = node.close().await;
+        assert_eq!(res, Err(RelayError::Timeout));
     }
 }
