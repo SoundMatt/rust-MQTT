@@ -1,6 +1,6 @@
 [package]
 name = "rust-mqtt"
-version = "1.3.0"
+version = "1.4.0"
 edition = "2021"
 description = "rust-MQTT: Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready. RELAY spec v1.11."
 license = "MPL-2.0"
@@ -24,6 +24,13 @@ default = []
 tls = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-native-certs"]
 ## Enables WebSocket transport for the v3 client (MQTT-over-WS per RFC 6455).
 websocket = ["dep:tokio-tungstenite"]
+## Gates `tests/mqtt_interop.rs` — real-broker and third-party-peer (Mosquitto
+## `mosquitto_pub`/`mosquitto_sub` CLI) interop tests (ROADMAP.md "Interop
+## testing"). The Rust-crate equivalent of rust-DDS's `cyclone-interop`
+## feature: without it this test file does not even compile, so it stays out
+## of the normal `cargo test` sweep and default CI. See `tests/mqtt_interop.rs`'s
+## module doc comment and the `mqtt-interop` CI job for how to run it.
+mqtt-interop = []
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
