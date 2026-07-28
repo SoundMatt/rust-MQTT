@@ -145,6 +145,64 @@ jobs:
             echo "relay interop: not yet EQUIVALENT (non-blocking until convert is fully wired)"
           fi
 
+  # ── Live-broker + third-party-peer interop (ROADMAP.md "Interop testing") ─
+  mqtt-interop:
+    name: MQTT interop against a live Mosquitto broker (ROADMAP.md "Interop testing")
+    runs-on: ubuntu-latest
+    services:
+      # Real Eclipse Mosquitto broker for genuine MQTT wire traffic over TCP.
+      # No special OS privileges needed (unlike the DDS/CAN sibling repos'
+      # UDP-multicast/SocketCAN interop harnesses) — a plain service
+      # container with the default port mapped is sufficient.
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ubuntu-cargo-mqtt-interop-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install mosquitto-clients (mosquitto_pub/mosquitto_sub — the independent third-party validator)
+        run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
+
+      # Probe-then-skip-cleanly posture (mirrors rust-DDS's `cyclone-interop`
+      # CI job): the `services:` container starts alongside the job but
+      # without a declared health check there is no guarantee its listener
+      # is accepting connections yet by the time this step runs, and a
+      # broker that never becomes reachable for any other reason should
+      # leave this job green (not red) rather than blocking ordinary CI on
+      # an environment dependency — see tests/mqtt_interop.rs's module doc
+      # comment for the same posture at the individual-test level.
+      - name: Probe live Mosquitto broker availability
+        id: probe
+        run: |
+          for i in $(seq 1 30); do
+            if mosquitto_pub -h localhost -p 1883 -t 'ci/mqtt-interop/probe' -m 'probe' -q 0 2>/dev/null; then
+              echo "available=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "available=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Mosquitto broker not reachable on localhost:1883 after 30s — skipping live-broker interop tests"
+
+      - name: Live MQTT interop (real-broker round-trip + mosquitto_pub/mosquitto_sub third-party-peer interop)
+        if: steps.probe.outputs.available == 'true'
+        run: cargo test --release --features mqtt-interop --test mqtt_interop -- --ignored --test-threads=1
+        env:
+          MQTT_INTEROP_BROKER: "127.0.0.1:1883"
+          MQTT_INTEROP_TIMEOUT_SECS: "15"
+
   # ── ASIL-B safety checks via rust-FuSa (§20.1.2) ─────────────────────────
   safety:
     name: ASIL-B safety (x-FuSa)

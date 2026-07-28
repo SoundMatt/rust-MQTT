@@ -5,6 +5,31 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.4.0] — 2026-07-27 — Interop testing infrastructure
+
+### Added
+
+- `tests/mqtt_interop.rs` (gated behind the new `mqtt-interop` Cargo
+  feature, `#[ignore]`d): real-broker round-trip and third-party-peer
+  interop tests against a live Eclipse Mosquitto broker
+  - `real_broker_publish_subscribe_round_trip` — rust-MQTT's own
+    `v3::Client`, in both publisher and subscriber roles, exchanging
+    genuine MQTT wire traffic with a real broker, field-exact receipt
+  - `rust_publisher_verified_by_mosquitto_sub` /
+    `mosquitto_pub_verified_by_rust_subscriber` — independent
+    cross-verification against Mosquitto's own bundled `mosquitto_pub`/
+    `mosquitto_sub` CLI tools, in both directions
+  - Probe-then-skip-cleanly posture at both the CI-job and individual-test
+    level: a broker that never becomes reachable leaves the job green
+    (`::notice::`, exit 0), not red
+- New `mqtt-interop` CI job: a GitHub Actions `services:` container running
+  `eclipse-mosquitto`, `mosquitto-clients` (apt) for the CLI tools, mirrors
+  the live-third-party-peer pattern rust-DDS's `cyclone-interop` job
+  established for CycloneDDS
+- `ROADMAP.md`: new "Interop testing" section documenting the capability
+
+---
+
 ## [1.3.0] — 2026-07-27
 
 ### Fixed
