@@ -118,7 +118,17 @@ jobs:
           key: go-relay-${{ hashFiles('**/go.sum') }}
 
       - name: Install relay CLI
-        run: go install github.com/SoundMatt/RELAY/cmd/relay@v2.0.2
+        # SoundMatt/RELAY's go.mod does not declare a "/v2" module-path
+        # suffix even at v2.x tags, so `go install .../relay@v2.0.2` fails
+        # Go's semantic-import-versioning check ("module path must match
+        # major version"). Installing by the v2.0.2 tag's commit SHA
+        # sidesteps that upstream tagging bug (Go resolves it as an
+        # untagged pseudo-version of the same content) and still yields
+        # the genuine v2.0.2 binary — verified locally: `relay version`
+        # reports "relay 2.0.2 (spec 2.0, ...)" from this exact SHA.
+        # TODO: switch back to `@v2.0.2` once SoundMatt/RELAY fixes its
+        # go.mod module path for v2 (file upstream, don't patch here).
+        run: go install github.com/SoundMatt/RELAY/cmd/relay@3344b3d1a6a4d870d26c81c6f3c3ff5ca2930e16
 
       - uses: dtolnay/rust-toolchain@stable
 
