@@ -230,7 +230,7 @@ jobs:
           key: ubuntu-cargo-safety-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install rsfusa
-        run: cargo install --git https://github.com/SoundMatt/rust-FuSa --tag v0.3.10 rsfusa --locked
+        run: cargo install --git https://github.com/SoundMatt/rust-FuSa --tag v0.3.17 rsfusa --locked
 
       - name: Build release binary (needed for qualify)
         run: cargo build --release --locked
