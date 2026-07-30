@@ -162,20 +162,20 @@ pub trait Drainer: Client {
 //fusa:req REQ-RELAY-015
 #[async_trait]
 pub trait HealthProvider {
-    async fn health(&self) -> HealthStatus;
+    async fn health(&self) -> Health;
 }
 
-/// Health state per RELAY spec §9 `HealthStatus` (`HealthOK`/`HealthDegraded`/`HealthDown`).
+/// Health status enum per RELAY spec §9 `HealthStatus` (`HealthOK`/`HealthDegraded`/`HealthDown`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum HealthState {
+pub enum HealthStatus {
     Ok,
     Degraded,
     #[default]
     Down,
 }
 
-/// Health status report from `HealthProvider`.
+/// Health report from `HealthProvider`, per RELAY spec §9 canonical `Health`.
 ///
 /// `status` and `details` mirror the RELAY spec §9 canonical `Health{Status,
 /// Details}` shape field-for-field so that cross-implementation tooling
@@ -183,8 +183,8 @@ pub enum HealthState {
 /// implementations of other x-Net protocols. `connected`/`endpoint` are
 /// implementation-specific extras beyond the canonical shape.
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub struct HealthStatus {
-    pub status: HealthState,
+pub struct Health {
+    pub status: HealthStatus,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub details: String,
     pub connected: bool,

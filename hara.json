@@ -73,8 +73,8 @@
       "exposure_rationale": "Collision situations occur with medium frequency for ADAS-equipped vehicles",
       "controllability": "C2",
       "controllability_rationale": "Driver may be able to observe hazard directly and react",
-      "asil": "ASIL-B",
-      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B per ISO 26262 Part 3 Table 4",
+      "asil": "ASIL-A",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-A per ISO 26262 Part 3 Table 4",
       "safety_goal": "SG-002: Message delivery shall be reliable; QoS \u2265 1 shall be used for safety-relevant ADAS signals",
       "reqs": [
         "REQ-HARA-002",
@@ -113,8 +113,8 @@
       "exposure_rationale": "Startup occurs regularly; retained messages always delivered on subscribe",
       "controllability": "C2",
       "controllability_rationale": "Systems typically verify freshness, but not always automated",
-      "asil": "ASIL-A",
-      "asil_rationale": "S1 x E3 x C2 \u2192 ASIL-A",
+      "asil": "QM",
+      "asil_rationale": "S1 x E3 x C2 \u2192 QM per ISO 26262 Part 3 Table 4 (S1 reaches ASIL-A only at S1/E4/C3)",
       "safety_goal": "SG-004: Integrators shall use expiry_interval on retained safety signals; rust-MQTT shall preserve expiry_interval across the RELAY layer",
       "reqs": [
         "REQ-HARA-003",
@@ -131,8 +131,8 @@
       "exposure_rationale": "High-throughput signal bursts are common in vehicle networks (e.g. radar point clouds)",
       "controllability": "C2",
       "controllability_rationale": "Application may detect task silence and restart, but not guaranteed",
-      "asil": "ASIL-B",
-      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B",
+      "asil": "ASIL-A",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-A",
       "safety_goal": "SG-005: rust-MQTT shall enforce configured back-pressure policy; no subscriber channel shall block the publisher task",
       "reqs": [
         "REQ-HARA-005",
@@ -152,8 +152,8 @@
       "exposure_rationale": "Network interruptions occur in vehicle environments (tunnels, RF interference)",
       "controllability": "C2",
       "controllability_rationale": "Application may implement watchdog; not automatic",
-      "asil": "ASIL-B",
-      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-B",
+      "asil": "ASIL-A",
+      "asil_rationale": "S2 x E3 x C2 \u2192 ASIL-A",
       "safety_goal": "SG-006: rust-MQTT shall validate CONNACK return code and return Error::ConnectionRefused on rejection; integrators shall implement reconnect logic",
       "reqs": [
         "REQ-CONN-009",
@@ -173,7 +173,7 @@
     {
       "id": "SG-002",
       "description": "Message delivery shall be reliable; QoS \u2265 1 shall be used for safety-relevant signals",
-      "asil": "ASIL-B",
+      "asil": "ASIL-A",
       "note": "See REQ-HARA-002, REQ-QOS-002"
     },
     {
@@ -185,19 +185,19 @@
     {
       "id": "SG-004",
       "description": "Integrators shall use expiry_interval on retained safety signals",
-      "asil": "ASIL-A",
+      "asil": "QM",
       "note": "See REQ-HARA-003, REQ-V5-MSG-005"
     },
     {
       "id": "SG-005",
       "description": "No subscriber channel shall block the publisher task; back-pressure must be configured",
-      "asil": "ASIL-B",
+      "asil": "ASIL-A",
       "note": "See REQ-HARA-005"
     },
     {
       "id": "SG-006",
       "description": "Integrators shall implement reconnect logic and monitor CONNACK validation",
-      "asil": "ASIL-B",
+      "asil": "ASIL-A",
       "note": "See SAFETY_MANUAL.md \u00a75"
     }
   ]

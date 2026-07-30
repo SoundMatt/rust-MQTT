@@ -5,6 +5,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.5.0] — 2026-07-30 — Audit fix pass
+
+### Fixed
+
+- **Critical (rust-MQTT-01)**: `read_varint` (`v3/mod.rs`) and
+  `read_varint_sync` (`broker/mod.rs`) off-by-one in the Remaining Length
+  decoder — a Remaining Length field with the continuation bit still set
+  after 4 bytes was not rejected until a disallowed 5th byte had already
+  been consumed. Both now reject before ever reading a 5th byte, per MQTT
+  3.1.1/5.0 §2.2.3 (max 4-byte, ≤268,435,455 Remaining Length)
+- `encode_remaining_length` (rust-MQTT-02) now refuses to encode a length
+  above 268,435,455 instead of silently emitting a malformed 5+ byte
+  wire packet
+- `build_publish` (rust-MQTT-N2-03) now refuses to emit a QoS>0 PUBLISH
+  without a Packet Identifier instead of silently dropping it and
+  corrupting the wire stream (MQTT §3.3.2.2)
+- `match_topic` (rust-MQTT-N2-02) now correctly expands an embedded `+`
+  combined with a trailing `/#` (e.g. `a/+/#`), per MQTT §4.7.1
+- HARA (rust-MQTT-N2-01): recomputed ASIL for HE-002/005/006 (ASIL-B →
+  ASIL-A) and HE-004 (ASIL-A → QM) per ISO 26262-3 Table 4; corrected
+  rationale strings and reconciled SG ASILs
+- `MockClient::publish`/`subscribe` (rust-MQTT-06) now records the
+  requested QoS on delivered messages instead of discarding it
+- Declared RELAY spec version (rust-MQTT-03) reconciled to the governing
+  v2.0 spec everywhere (was a 3-way disagreement between 1.10/1.11/2.0
+  across code, README, ROADMAP, SAFETY_PLAN, SAFETY_MANUAL, CLAUDE.md,
+  Cargo.toml, and CI)
+
+### Changed
+
+- **Breaking**: `client::HealthState` renamed to `client::HealthStatus`
+  (enum) and `client::HealthStatus` renamed to `client::Health` (struct),
+  per RELAY spec §9 canonical naming (rust-MQTT-04)
+- README/CLI no longer claim MQTT v5 wire support (`v5-properties`
+  removed from `capabilities`); v5 fields exist on `Message` but are not
+  wire-negotiated until a v5 client ships (rust-MQTT-07)
+- SAFETY_MANUAL.md §12.2 updated: QoS 2 exactly-once is implemented in
+  `v3`/`broker`, no longer downgraded (rust-MQTT-05)
+- Requirement count reconciled to 131 across CHANGELOG/CLAUDE.md/
+  SAFETY_MANUAL.md (rust-MQTT-08); SAFETY_MANUAL.md §2 ASIL-B claim
+  qualified with the §3 ASIL-D exclusion (rust-MQTT-09); CLAUDE.md
+  version-history table extended through v1.4.0 (rust-MQTT-10)
+
+### Note
+
+- rust-MQTT-11 (capabilities `commands` list omits `connect`, adds
+  non-canonical `convert`) remains open — advisory, not addressed in this
+  pass.
+
+---
+
 ## [1.4.0] — 2026-07-27 — Interop testing infrastructure
 
 ### Added
@@ -83,7 +134,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
-- Full safety pack: 124 requirements, HARA, TARA×10, FMEA×15, GSN, DO-178C, safety manual
+- Full safety pack: 131 requirements, HARA, TARA×10, FMEA×15, GSN, DO-178C, safety manual
 
 ---
 

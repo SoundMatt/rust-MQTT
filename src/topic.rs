@@ -37,32 +37,35 @@ pub fn match_topic(filter: &str, topic: &str) -> bool {
     }
 
     // 'filter/subtree/#' — matches filter/subtree and anything beneath it.
-    if let Some(prefix) = filter.strip_suffix("/#") {
-        if topic_is_system && !prefix.starts_with('$') {
-            return false;
-        }
-        return topic == prefix || topic.starts_with(&format!("{}/", prefix));
-    }
-
-    // No '#' — match level-by-level with '+' as single-level wildcard.
+    // Level-by-level so an embedded '+' (e.g. "a/+/#") is still expanded.
     let f_parts: Vec<&str> = filter.split('/').collect();
     let t_parts: Vec<&str> = topic.split('/').collect();
 
-    if f_parts.len() != t_parts.len() {
-        return false;
-    }
-
-    for (i, (f, t)) in f_parts.iter().zip(t_parts.iter()).enumerate() {
+    for (i, f) in f_parts.iter().enumerate() {
+        if *f == "#" {
+            // Multi-level wildcard: matches the remaining levels (and the
+            // parent). A leading '#' does not match '$' topics.
+            if i == 0 && topic_is_system {
+                return false;
+            }
+            return true;
+        }
+        // Filter has more levels than the topic (and this level isn't '#').
+        if i >= t_parts.len() {
+            return false;
+        }
         if *f == "+" {
             // '+' at the first level does not match '$' topics.
             if i == 0 && topic_is_system {
                 return false;
             }
-        } else if f != t {
+        } else if *f != t_parts[i] {
             return false;
         }
     }
-    true
+
+    // All filter levels consumed without '#': lengths must match exactly.
+    f_parts.len() == t_parts.len()
 }
 
 #[cfg(test)]
@@ -87,6 +90,17 @@ mod tests {
         assert!(match_topic("a/#", "a/b"));
         assert!(match_topic("a/#", "a/b/c"));
         assert!(!match_topic("a/#", "b/c"));
+    }
+
+    #[test]
+    fn plus_combined_with_hash() {
+        // Embedded '+' before a trailing '/#' must still expand (MQTT §4.7.1).
+        assert!(match_topic("a/+/#", "a/b/c"));
+        assert!(match_topic("a/+/#", "a/b/c/d"));
+        assert!(match_topic("a/+/#", "a/b")); // '#' matches the parent level
+        assert!(!match_topic("a/+/#", "a")); // '+' requires a level
+        assert!(!match_topic("a/+/#", "x/b/c"));
+        assert!(match_topic("sport/+/#", "sport/tennis/player1"));
     }
 
     #[test]
