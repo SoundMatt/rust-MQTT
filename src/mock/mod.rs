@@ -6,8 +6,12 @@
 //! In-process mock MQTT broker for unit testing.
 //!
 //! Implements full publish/subscribe semantics including wildcard topic
-//! matching per §4.7, retained messages, QoS 0/1/2 (all treated as
-//! best-effort in the mock), and back-pressure policies.
+//! matching per §4.7, retained messages, and back-pressure policies.
+//!
+//! QoS handling: the requested QoS is recorded on each delivered [`Message`]
+//! (`Message::qos`) so tests can assert it, but delivery itself is
+//! best-effort for QoS 0/1/2 — the mock does not perform the QoS 1/2
+//! acknowledgement handshakes (see `v3::Client` for real handshake logic).
 //!
 //! No network — zero external dependencies. Use this as the test backend.
 //!
@@ -36,8 +40,8 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::backpressure::{self, RingSender};
 use crate::client::{
-    BackPressurePolicy, Client, Drainer, HealthProvider, HealthState, HealthStatus,
-    MetricsProvider, MetricsSnapshot, SubscriberConfig, Subscription,
+    BackPressurePolicy, Client, Drainer, Health, HealthProvider, HealthStatus, MetricsProvider,
+    MetricsSnapshot, SubscriberConfig, Subscription,
 };
 use crate::error::Error;
 use crate::message::{Message, QoS};
@@ -199,7 +203,7 @@ impl Default for MockClient {
 impl Client for MockClient {
     //fusa:req REQ-PUB-001
     //fusa:req REQ-PUB-002
-    async fn publish(&self, topic: &str, _qos: QoS, payload: Vec<u8>) -> Result<(), Error> {
+    async fn publish(&self, topic: &str, qos: QoS, payload: Vec<u8>) -> Result<(), Error> {
         if self.state.closed.load(Ordering::SeqCst) {
             self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::Closed);
@@ -213,7 +217,7 @@ impl Client for MockClient {
         let msg = Message {
             topic: topic.to_owned(),
             payload,
-            qos: _qos,
+            qos,
             ..Default::default()
         };
 
@@ -352,13 +356,13 @@ impl Drainer for MockClient {
 
 #[async_trait]
 impl HealthProvider for MockClient {
-    async fn health(&self) -> HealthStatus {
+    async fn health(&self) -> Health {
         let closed = self.state.closed.load(Ordering::SeqCst);
-        HealthStatus {
+        Health {
             status: if closed {
-                HealthState::Down
+                HealthStatus::Down
             } else {
-                HealthState::Ok
+                HealthStatus::Ok
             },
             details: String::new(),
             connected: !closed,
@@ -405,6 +409,26 @@ mod tests {
             .unwrap();
         assert_eq!(msg.topic, "test/topic");
         assert_eq!(msg.payload, b"hello");
+    }
+
+    #[tokio::test]
+    async fn delivered_message_preserves_qos() {
+        // The mock is best-effort but MUST record the requested QoS on the
+        // delivered message so tests can distinguish QoS levels.
+        let client = MockClient::new();
+        let mut sub = client
+            .subscribe("q/topic", QoS::ExactlyOnce, SubscriberConfig::default())
+            .await
+            .unwrap();
+
+        for qos in [QoS::AtMostOnce, QoS::AtLeastOnce, QoS::ExactlyOnce] {
+            client.publish("q/topic", qos, b"x".to_vec()).await.unwrap();
+            let msg = timeout(Duration::from_secs(1), sub.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(msg.qos, qos, "delivered message must carry publish QoS");
+        }
     }
 
     #[tokio::test]
@@ -577,7 +601,7 @@ mod tests {
     async fn health_and_metrics() {
         let client = MockClient::new();
         let h = client.health().await;
-        assert_eq!(h.status, crate::client::HealthState::Ok);
+        assert_eq!(h.status, crate::client::HealthStatus::Ok);
         assert!(h.connected);
 
         let mut sub = client

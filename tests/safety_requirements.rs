@@ -736,12 +736,16 @@ fn conn_lwt_encoded() {
 //fusa:req REQ-RELAY-015
 //fusa:req REQ-DIAG-001
 fn health_provider_status() {
-    use rust_mqtt::client::HealthState;
+    use rust_mqtt::client::HealthStatus;
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let client = MockClient::new();
         let status = client.health().await;
-        assert_eq!(status.status, HealthState::Ok, "mock client must report Ok");
+        assert_eq!(
+            status.status,
+            HealthStatus::Ok,
+            "mock client must report Ok"
+        );
     });
 }
 

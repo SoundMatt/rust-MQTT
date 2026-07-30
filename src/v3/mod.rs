@@ -40,8 +40,8 @@ use tokio::time::timeout;
 
 use crate::backpressure::{self, RingSender};
 use crate::client::{
-    BackPressurePolicy, HealthProvider, HealthState, HealthStatus, MetricsProvider,
-    MetricsSnapshot, SubscriberConfig, Subscription,
+    BackPressurePolicy, Health, HealthProvider, HealthStatus, MetricsProvider, MetricsSnapshot,
+    SubscriberConfig, Subscription,
 };
 use crate::error::Error;
 use crate::message::{Message, QoS};
@@ -548,7 +548,10 @@ async fn read_varint(r: &mut tokio::net::tcp::OwnedReadHalf) -> Result<usize, Er
         if byte & 0x80 == 0 {
             break;
         }
-        if shift > 28 {
+        // MQTT §2.2.3: Remaining Length is at most 4 bytes. Once 4 bytes have
+        // been consumed (shift == 28) and the continuation bit is still set,
+        // the packet is malformed and MUST be rejected before reading a 5th.
+        if shift >= 28 {
             return Err(Error::Protocol("remaining length overflow".into()));
         }
     }
@@ -718,13 +721,13 @@ impl crate::client::Client for Client {
 
 #[async_trait]
 impl HealthProvider for Client {
-    async fn health(&self) -> HealthStatus {
+    async fn health(&self) -> Health {
         let closed = self.state.closed.load(Ordering::SeqCst);
-        HealthStatus {
+        Health {
             status: if closed {
-                HealthState::Down
+                HealthStatus::Down
             } else {
-                HealthState::Ok
+                HealthStatus::Ok
             },
             details: String::new(),
             connected: !closed,
@@ -744,5 +747,75 @@ impl MetricsProvider for Client {
             bytes_delivered: self.state.bytes_delivered.load(Ordering::Relaxed),
             error_count: self.state.error_count.load(Ordering::Relaxed),
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Independent reviewer checks for rust-MQTT-01 (off-by-one in the client-side
+// Remaining Length varint decoder). These call `read_varint` directly (the
+// actual shipped private fn, not a reimplementation) over a real TCP
+// loopback pair, mirroring the equivalent checks added for `broker::
+// read_varint_sync`. Not part of the audited diff — added independently to
+// verify the fix rather than trust it or the diff's own (encode-side-only)
+// tests.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod varint_reviewer_checks {
+    use super::read_varint;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::time::{timeout, Duration};
+
+    async fn loopback_pair() -> (tokio::net::tcp::OwnedReadHalf, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (server_read, _server_write) = server.into_split();
+        (server_read, client)
+    }
+
+    #[tokio::test]
+    async fn read_varint_rejects_5th_continuation_byte() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // 4 bytes all with the continuation bit set. MQTT 3.1.1 §2.2.3: a
+        // Remaining Length field is at most 4 bytes; a 4th byte with the
+        // continuation bit still set is malformed and MUST be rejected
+        // WITHOUT ever consuming a 5th byte.
+        client.write_all(&[0xFF, 0xFF, 0xFF, 0xFF]).await.unwrap();
+        let result = timeout(Duration::from_millis(500), read_varint(&mut server_read))
+            .await
+            .expect("must not hang waiting for a disallowed 5th byte");
+        assert!(
+            result.is_err(),
+            "a 4-byte varint with the continuation bit still set must be rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_varint_accepts_exact_max_268435455() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // Canonical 4-byte encoding of 268,435,455 (0x0FFF_FFFF), the MQTT
+        // 3.1.1 §2.2.3 maximum Remaining Length. Must be accepted exactly.
+        client.write_all(&[0xFF, 0xFF, 0xFF, 0x7F]).await.unwrap();
+        let result = timeout(Duration::from_millis(500), read_varint(&mut server_read))
+            .await
+            .expect("must not hang on a legal 4-byte varint");
+        assert_eq!(result.unwrap(), 268_435_455);
+    }
+
+    #[tokio::test]
+    async fn read_varint_rejects_5byte_over_max_encoding() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // A 5-byte encoding representing a value > 268,435,455. Structurally
+        // illegal regardless of payload semantics.
+        client
+            .write_all(&[0xFF, 0xFF, 0xFF, 0xFF, 0x01])
+            .await
+            .unwrap();
+        let result = timeout(Duration::from_millis(500), read_varint(&mut server_read))
+            .await
+            .expect("must not hang");
+        assert!(result.is_err());
     }
 }

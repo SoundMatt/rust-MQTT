@@ -2,7 +2,7 @@
 
 Pure-Rust MQTT client library — safety-oriented, broker-agnostic, COVESA/VISSR ready.
 
-**RELAY spec v1.11 conformant** · ASIL-B / SIL 2 · ISO 26262 · IEC 61508 · ISO 21434
+**RELAY spec v2.0 conformant** · ASIL-B / SIL 2 · ISO 26262 · IEC 61508 · ISO 21434
 
 [![CI](https://github.com/SoundMatt/rust-MQTT/actions/workflows/ci.yml/badge.svg)](https://github.com/SoundMatt/rust-MQTT/actions/workflows/ci.yml)
 
@@ -81,7 +81,7 @@ testing without a live broker.
 
 ---
 
-## RELAY compliance (v1.11)
+## RELAY compliance (v2.0)
 
 | Gate | Status |
 |---|---|
@@ -118,7 +118,7 @@ See `SAFETY_PLAN.md` for the full Software Safety Plan.
 | Retained messages | ✅ | ✅ |
 | Last-will-and-testament | ✅ | ✅ |
 | Topic wildcards §4.7 | ✅ | ✅ |
-| MQTT v5 message properties | ✅ | ✅ |
+| MQTT v5 message properties | ✅ | ⚠️ struct fields only (not wire-negotiated) |
 | RELAY adapt() | ✅ | ✅ |
 | relay conform gate | ✅ | ✅ |
 | relay interop convert | ✅ | ✅ |

@@ -370,7 +370,9 @@ async fn read_varint_sync(r: &mut tokio::net::tcp::OwnedReadHalf) -> Result<usiz
         if byte & 0x80 == 0 {
             break;
         }
-        if shift > 28 {
+        // MQTT §2.2.3: Remaining Length is at most 4 bytes. Reject before
+        // consuming a disallowed 5th continuation byte.
+        if shift >= 28 {
             return Err(());
         }
     }
@@ -509,5 +511,86 @@ mod tests {
         c1.close().await.unwrap();
         c2.close().await.unwrap();
         broker.close().await;
+    }
+
+    // ------------------------------------------------------------------
+    // Independent reviewer checks for rust-MQTT-01 (off-by-one in the
+    // Remaining Length varint decoder). These call `read_varint_sync`
+    // directly (the actual shipped private fn, not a reimplementation)
+    // over a real TCP loopback pair, so they exercise exactly the code
+    // path a malicious/malformed peer would hit. Not part of the audited
+    // diff — added independently to verify the fix rather than trust it.
+    // ------------------------------------------------------------------
+
+    async fn loopback_pair() -> (tokio::net::tcp::OwnedReadHalf, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (server_read, _server_write) = server.into_split();
+        (server_read, client)
+    }
+
+    #[tokio::test]
+    async fn read_varint_sync_rejects_5th_continuation_byte() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // 4 bytes all with the continuation bit set, then a 5th byte.
+        // MQTT 3.1.1 §2.2.3: Remaining Length is at most 4 bytes; a 4th
+        // byte with the continuation bit still set is malformed and MUST
+        // be rejected WITHOUT consuming a 5th byte.
+        client.write_all(&[0xFF, 0xFF, 0xFF, 0xFF]).await.unwrap();
+        let result = timeout(
+            Duration::from_millis(500),
+            read_varint_sync(&mut server_read),
+        )
+        .await
+        .expect("must not hang waiting for a 5th byte");
+        assert!(
+            result.is_err(),
+            "a 4-byte sequence with the continuation bit still set on byte 4 must be rejected"
+        );
+
+        // Prove the parser never read a 5th byte: bytes still unread on
+        // the wire are observable by writing one more and reading it back
+        // raw on a fresh connection would be a stronger check, but the
+        // simplest proof is that the above resolved without blocking on
+        // a 5th byte — if the old `shift > 28` bug were present, the
+        // function would still be awaiting `read_u8()` for a 5th byte
+        // right now and the `timeout` above would have fired instead.
+    }
+
+    #[tokio::test]
+    async fn read_varint_sync_accepts_exact_max_268435455() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // Canonical 4-byte encoding of 268,435,455 (0x0FFF_FFFF), the MQTT
+        // 3.1.1 §2.2.3 maximum Remaining Length.
+        client.write_all(&[0xFF, 0xFF, 0xFF, 0x7F]).await.unwrap();
+        let result = timeout(
+            Duration::from_millis(500),
+            read_varint_sync(&mut server_read),
+        )
+        .await
+        .expect("must not hang on a legal 4-byte varint");
+        assert_eq!(result, Ok(268_435_455));
+    }
+
+    #[tokio::test]
+    async fn read_varint_sync_rejects_over_max_via_5byte_encoding() {
+        let (mut server_read, mut client) = loopback_pair().await;
+        // A 5-byte encoding of a value one past the maximum. Even though
+        // the payload of this specific packet is nonsense, the point is
+        // structural: any encoding needing a 5th byte is illegal, and this
+        // one in particular represents a value > 268,435,455.
+        client
+            .write_all(&[0xFF, 0xFF, 0xFF, 0xFF, 0x01])
+            .await
+            .unwrap();
+        let result = timeout(
+            Duration::from_millis(500),
+            read_varint_sync(&mut server_read),
+        )
+        .await
+        .expect("must not hang");
+        assert!(result.is_err());
     }
 }

@@ -71,6 +71,12 @@ fn encode_bytes(buf: &mut Vec<u8>, b: &[u8]) {
 }
 
 fn encode_remaining_length(buf: &mut Vec<u8>, mut len: usize) {
+    // MQTT §2.2.3: Remaining Length is bounded to 268,435,455 (4 bytes). Refuse
+    // to emit a malformed wire packet with an oversized (5+ byte) length.
+    assert!(
+        len <= 268_435_455,
+        "remaining length {len} exceeds MQTT §2.2.3 maximum of 268435455"
+    );
     loop {
         let mut digit = (len % 128) as u8;
         len /= 128;
@@ -176,10 +182,13 @@ pub fn build_publish(
     let mut body = Vec::new();
     encode_string(&mut body, topic);
     if qos != QoS::AtMostOnce {
-        if let Some(pid) = packet_id {
-            body.push((pid >> 8) as u8);
-            body.push(pid as u8);
-        }
+        // MQTT §3.3.2.2: a PUBLISH with QoS > 0 MUST carry a Packet Identifier.
+        // Never silently emit a QoS>0 PUBLISH without one — that corrupts the
+        // wire stream (payload bytes get parsed as the packet id).
+        let pid =
+            packet_id.expect("build_publish: QoS > 0 requires a Packet Identifier (MQTT §3.3.2.2)");
+        body.push((pid >> 8) as u8);
+        body.push(pid as u8);
     }
     body.extend_from_slice(payload);
 
@@ -263,6 +272,27 @@ mod tests {
     fn publish_packet_qos1() {
         let pkt = build_publish("test/t", b"hello", QoS::AtLeastOnce, false, Some(1));
         assert_eq!(pkt[0], 0x32); // PUBLISH, QoS=1
+    }
+
+    #[test]
+    #[should_panic(expected = "Packet Identifier")]
+    fn publish_qos1_without_pid_panics() {
+        // MQTT §3.3.2.2: QoS > 0 PUBLISH without a Packet Identifier is illegal.
+        let _ = build_publish("test/t", b"hello", QoS::AtLeastOnce, false, None);
+    }
+
+    #[test]
+    fn remaining_length_at_max_boundary() {
+        let mut buf = Vec::new();
+        encode_remaining_length(&mut buf, 268_435_455);
+        assert_eq!(buf, vec![0xFF, 0xFF, 0xFF, 0x7F]);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds MQTT")]
+    fn remaining_length_above_max_panics() {
+        let mut buf = Vec::new();
+        encode_remaining_length(&mut buf, 268_435_456);
     }
 
     #[test]

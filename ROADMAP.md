@@ -12,7 +12,7 @@ The project focuses on:
 - Safety-oriented development with rust-FuSa (x-FuSa spec) annotations
 - Broker-agnostic design (Mosquitto, HiveMQ, EMQX, AWS IoT, …)
 - Zero unsafe, minimal external dependencies
-- RELAY spec v1.11 full conformance (§20 continuous conformance)
+- RELAY spec v2.0 full conformance (§20 continuous conformance)
 
 ---
 
@@ -20,7 +20,7 @@ The project focuses on:
 
 | Version | Theme | Status |
 |---|---|---|
-| **v1.0** | Foundation: Client trait, mock broker, v3.1.1 TCP client, RELAY v1.11 conformance, CI, safety artefacts | ✅ |
+| **v1.0** | Foundation: Client trait, mock broker, v3.1.1 TCP client, RELAY v2.0 conformance, CI, safety artefacts | ✅ |
 | v1.1 | MQTT v5.0 client (`v5/`) — user properties, response topic, correlation data | planned |
 | v1.2 | TLS/mTLS (`v3::ConnectOptions::tls`, `tls` feature) | planned |
 | v1.3 | WebSocket transport (`v3::ConnectOptions::websocket`, `websocket` feature) | planned |

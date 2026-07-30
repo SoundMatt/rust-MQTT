@@ -215,7 +215,7 @@ fn cmd_capabilities() -> Result<i32, Box<dyn std::error::Error>> {
         "spec_version":        rust_mqtt::SPEC_VERSION,
         "commands":            ["version", "capabilities", "status", "send", "subscribe", "convert"],
         "transports":          ["tcp"],
-        "features":            ["wildcard-subscriptions", "retained-messages", "qos012", "lwt", "v5-properties"],
+        "features":            ["wildcard-subscriptions", "retained-messages", "qos012", "lwt"],
         "interfaces":          ["Client", "Subscription"],
         "optional_interfaces": ["HealthProvider", "MetricsProvider", "Drainer"],
         "adapt":               true,

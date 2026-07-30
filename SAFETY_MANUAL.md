@@ -23,11 +23,11 @@ system-level HARA, hardware fault modelling, and ASIL allocation.
 
 | Property | Claim | Evidence |
 |---|---|---|
-| ASIL | ASIL-B for all library API functions | `hara.json`, `safety-case.json` |
+| ASIL | ASIL-B for all library API functions (with the §3 ASIL-D exclusion for HE-001/HE-003) | `hara.json`, `safety-case.json` |
 | SIL | SIL 2 per IEC 61508-3 | `SAFETY_PLAN.md` |
 | Memory safety | No `unsafe` blocks in library code | `src/`, CI rsfusa check |
-| Requirement coverage | 124 requirements, 100% traced | `requirements.json` |
-| RELAY conformance | RELAY spec v1.10 §20 | CI relay-conform job |
+| Requirement coverage | 131 requirements, 100% traced | `requirements.json` |
+| RELAY conformance | RELAY spec v2.0 §20 | CI relay-conform job |
 | FMEA | 15 failure modes analysed, RPN < 60 | `fmea.json` |
 | TARA | 10 threats analysed, CVSS scored | `tara.json` |
 | HARA | 6 hazardous events, 6 safety goals | `hara.json` |
@@ -176,10 +176,10 @@ the integrating system:
 1. **MQTT v5.0 not yet implemented.** v5 user properties are carried in
    `Message` but the TCP client (`v3/`) sends MQTT v3.1.1. v5 `expiry_interval`
    enforcement requires the broker.
-2. **QoS 2 is accepted but treated as QoS 1** in the mock broker; the v3 TCP
-   client currently drops QoS 2 PUBLISH (treated as QoS 0). Integrators
-   requiring exactly-once delivery must use QoS 1 with application-level
-   deduplication.
+2. **QoS 2 exactly-once is implemented** in the `v3` TCP client (full
+   PUBLISH→PUBREC→PUBREL→PUBCOMP handshake) and the embedded broker gained
+   receiver-side QoS 2 support. The in-process mock is best-effort and records
+   but does not enforce QoS; use the `v3` client for exactly-once semantics.
 3. **No automatic reconnection.** See §6.
 4. **Embedded broker is test-only.** See §10.
 
