@@ -118,17 +118,11 @@ jobs:
           key: go-relay-${{ hashFiles('**/go.sum') }}
 
       - name: Install relay CLI
-        # SoundMatt/RELAY's go.mod does not declare a "/v2" module-path
-        # suffix even at v2.x tags, so `go install .../relay@v2.0.2` fails
-        # Go's semantic-import-versioning check ("module path must match
-        # major version"). Installing by the v2.0.2 tag's commit SHA
-        # sidesteps that upstream tagging bug (Go resolves it as an
-        # untagged pseudo-version of the same content) and still yields
-        # the genuine v2.0.2 binary — verified locally: `relay version`
-        # reports "relay 2.0.2 (spec 2.0, ...)" from this exact SHA.
-        # TODO: switch back to `@v2.0.2` once SoundMatt/RELAY fixes its
-        # go.mod module path for v2 (file upstream, don't patch here).
-        run: go install github.com/SoundMatt/RELAY/cmd/relay@3344b3d1a6a4d870d26c81c6f3c3ff5ca2930e16
+        # SoundMatt/RELAY fixed its go.mod module path in v2.0.4 (closes
+        # RELAY#70): it now declares "github.com/SoundMatt/RELAY/v2" per
+        # Go's semantic import versioning rules, so normal tag-based
+        # `go install` works again. No more commit-hash workaround needed.
+        run: go install github.com/SoundMatt/RELAY/v2/cmd/relay@v2.0.4
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -147,13 +141,17 @@ jobs:
       - name: relay conform --strict
         run: relay conform --strict ./target/release/rust-mqtt
 
-      - name: relay interop (§20.2)
-        run: |
-          if relay interop --protocol MQTT --impl ./target/release/rust-mqtt 2>/dev/null; then
-            echo "relay interop EQUIVALENT"
-          else
-            echo "relay interop: not yet EQUIVALENT (non-blocking until convert is fully wired)"
-          fi
+      - name: relay interop --strict (§20.2)
+        # `relay interop` takes the binary as a positional argument, not
+        # `--impl` — that flag has never existed (verified against
+        # cmd/relay/interop.go, which parses via `fs.Args()`). The old
+        # invocation always hit a flag-parse error, was swallowed by
+        # `2>/dev/null`, and silently fell through to the "non-blocking"
+        # branch — so this gate never actually ran. Fixed to the real
+        # syntax and confirmed locally: `relay interop --strict --protocol
+        # MQTT ./target/release/rust-mqtt` reports EQUIVALENT for both
+        # `relay` (reference) and `rust-mqtt`, so the gate is now blocking.
+        run: relay interop --strict --protocol MQTT ./target/release/rust-mqtt
 
   # ── Live-broker + third-party-peer interop (ROADMAP.md "Interop testing") ─
   mqtt-interop:
