@@ -388,6 +388,14 @@ fn build_publish_pkt(
 ) -> Vec<u8> {
     let mut body = Vec::new();
     let t = topic.as_bytes();
+    // OASIS MQTT v3.1.1 §1.5.3: a UTF-8 Encoded String is prefixed by a
+    // two-byte length and MUST NOT exceed 65535 bytes, matching the guard in
+    // the client-side `encode_string` (src/v3/packet.rs).
+    assert!(
+        t.len() <= 0xFFFF,
+        "MQTT topic length {} exceeds §1.5.3 maximum of 65535 bytes",
+        t.len()
+    );
     body.push((t.len() >> 8) as u8);
     body.push(t.len() as u8);
     body.extend_from_slice(t);
@@ -399,6 +407,15 @@ fn build_publish_pkt(
 
     let flags: u8 = ((qos as u8) << 1) | (retained as u8);
     let mut out = vec![(3 << 4) | flags];
+    // MQTT §2.2.3: Remaining Length is bounded to 268,435,455 (4 bytes). The
+    // client-side encoder (`encode_remaining_length`) already enforces this;
+    // apply the same guard here so the embedded broker never emits an
+    // oversized (5+ byte) malformed length.
+    assert!(
+        body.len() <= 268_435_455,
+        "remaining length {} exceeds MQTT §2.2.3 maximum of 268435455",
+        body.len()
+    );
     let mut rem = body.len();
     loop {
         let mut d = (rem % 128) as u8;
@@ -422,6 +439,30 @@ mod tests {
     use crate::message::QoS;
     use crate::v3::{Client as V3Client, ConnectOptions};
     use tokio::time::{timeout, Duration};
+
+    #[test]
+    #[should_panic(expected = "exceeds MQTT §2.2.3 maximum of 268435455")]
+    fn build_publish_pkt_above_remaining_length_max_panics() {
+        // Regression test for rust-MQTT-02: the embedded broker's hand-rolled
+        // PUBLISH encoder previously had no upper-bound guard on Remaining
+        // Length (unlike the client-side `encode_remaining_length`), so it
+        // could silently emit a 5+ byte malformed length. Build a body one
+        // byte over the §2.2.3 268,435,455 ceiling and confirm it now fails
+        // loudly instead of emitting a malformed packet.
+        let oversized_payload = vec![0u8; 268_435_455]; // + 2-byte topic prefix + topic bytes pushes body over the limit
+        let _ = build_publish_pkt("t", &oversized_payload, QoS::AtMostOnce, false, None);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds §1.5.3 maximum of 65535 bytes")]
+    fn build_publish_pkt_above_topic_length_max_panics() {
+        // Regression test for rust-MQTT-02's shared MQTT-01 topic-length
+        // truncation: build_publish_pkt hand-rolls its own 16-bit topic
+        // length prefix rather than calling the client-side `encode_string`,
+        // so it needs its own guard.
+        let topic = "a".repeat(0x10000); // 65536 bytes, one over the limit
+        let _ = build_publish_pkt(&topic, b"x", QoS::AtMostOnce, false, None);
+    }
 
     #[tokio::test]
     async fn broker_start_and_connect() {

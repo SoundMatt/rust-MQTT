@@ -5,6 +5,43 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [1.6.0] — 2026-07-31 — Audit fix pass
+
+### Fixed
+
+- **rust-MQTT-01**: `encode_string`/`encode_bytes` (`v3/packet.rs`) silently
+  truncated the wire length prefix to 16 bits with no bound check — an
+  over-65535-byte `client_id`/topic/will field/username/password would wrap
+  and corrupt the wire packet instead of being rejected. Both now assert
+  the OASIS MQTT v3.1.1 §1.5.3 65535-byte ceiling before emitting the
+  length prefix
+- **rust-MQTT-02**: the embedded test broker's `build_publish_pkt`
+  (`broker/mod.rs`) hand-rolled its own Remaining-Length and topic-length
+  encoding with no upper bound (unlike the client-side encoders); it now
+  asserts the same §2.2.3 (268,435,455) and §1.5.3 (65535) ceilings for
+  consistency
+- **rust-MQTT-03**: CI's ASIL-B strict safety gate
+  (`rsfusa check --strict`) was masked with `|| true`, so a failing
+  strict check could never fail the job. Removed the mask, per RELAY
+  spec §20.1.2's MUST-fail-the-job requirement for the strict gate
+- **rust-MQTT-04**: a PUBLISH with both QoS bits set to 1 (QoS "3") was
+  silently downgraded to QoS 0 and delivered instead of being rejected.
+  Per OASIS MQTT v3.1.1 §3.3.1.2 / MQTT-3.3.1-4 the client now closes the
+  Network Connection on receipt of such a packet
+- **rust-MQTT-A1**: `Error::PayloadTooLarge` was defined but never
+  produced — an oversized topic or payload passed to `Client::publish`
+  panicked deep inside the encoder instead of returning a catchable
+  error. `publish()` now validates size up front and returns
+  `Error::PayloadTooLarge`
+- **rust-MQTT-A2**: the QoS-2 `incoming_qos2` receive map had no upper
+  bound, letting a malicious or misbehaving broker exhaust client memory
+  by opening many PUBLISH/PUBREC handshakes and never sending PUBREL.
+  Capped at `MAX_INCOMING_QOS2` (4096) entries; exceeding the cap with a
+  new Packet Identifier now closes the connection instead of growing the
+  map further
+
+---
+
 ## [1.5.0] — 2026-07-30 — Audit fix pass
 
 ### Fixed

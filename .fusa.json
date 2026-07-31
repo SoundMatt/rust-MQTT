@@ -1,0 +1,18 @@
+{
+  "version": "1",
+  "standard": "iso26262",
+  "project": {
+    "name": "rust-MQTT",
+    "module": "github.com/SoundMatt/rust-MQTT",
+    "standard": "iso26262",
+    "asil": "ASIL-B"
+  },
+  "rules": {
+    "exclude": [],
+    "severity": {}
+  },
+  "report": {
+    "format": "json",
+    "output": "check-report.json"
+  }
+}
