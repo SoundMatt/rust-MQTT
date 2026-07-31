@@ -248,7 +248,7 @@ jobs:
         run: rsfusa analyze --dir . --format json --output analyze-report.json || true
 
       - name: Safety check (ASIL-B strict — §20.1.2)
-        run: rsfusa check --dir . --strict --format json --output check-report.json || true
+        run: rsfusa check --dir . --strict --format json --output check-report.json
 
       - name: Safety check SARIF (GitHub code scanning)
         run: rsfusa check --dir . --format sarif --output results.sarif || true

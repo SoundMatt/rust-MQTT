@@ -59,12 +59,30 @@ impl PacketType {
 
 fn encode_string(buf: &mut Vec<u8>, s: &str) {
     let bytes = s.as_bytes();
+    // OASIS MQTT v3.1.1 §1.5.3 "UTF-8 encoded strings": prefixed by a two-byte
+    // length and MUST NOT exceed 65535 bytes. Truncating the length to 16 bits
+    // would emit a malformed packet whose payload bytes are re-parsed as later
+    // fields.
+    assert!(
+        bytes.len() <= 0xFFFF,
+        "MQTT string length {} exceeds §1.5.3 maximum of 65535 bytes",
+        bytes.len()
+    );
     buf.push((bytes.len() >> 8) as u8);
     buf.push(bytes.len() as u8);
     buf.extend_from_slice(bytes);
 }
 
 fn encode_bytes(buf: &mut Vec<u8>, b: &[u8]) {
+    // OASIS MQTT v3.1.1 has no standalone "Binary Data" section (that is a
+    // v5-only construct); binary fields (e.g. CONNECT Password, §3.1.3.5) use
+    // the same two-byte length-prefix encoding as UTF-8 strings (§1.5.3) and
+    // are bound by the same 65535-byte limit.
+    assert!(
+        b.len() <= 0xFFFF,
+        "MQTT binary length {} exceeds 65535-byte maximum (cf. §1.5.3)",
+        b.len()
+    );
     buf.push((b.len() >> 8) as u8);
     buf.push(b.len() as u8);
     buf.extend_from_slice(b);
@@ -293,6 +311,42 @@ mod tests {
     fn remaining_length_above_max_panics() {
         let mut buf = Vec::new();
         encode_remaining_length(&mut buf, 268_435_456);
+    }
+
+    #[test]
+    fn encode_string_at_max_boundary_ok() {
+        // OASIS MQTT v3.1.1 §1.5.3: exactly 65535 bytes is the largest legal
+        // UTF-8 Encoded String length; it must round-trip through the length
+        // prefix without truncation or panic.
+        let s = "a".repeat(0xFFFF);
+        let mut buf = Vec::new();
+        encode_string(&mut buf, &s);
+        assert_eq!(buf[0], 0xFF);
+        assert_eq!(buf[1], 0xFF);
+        assert_eq!(buf.len(), 2 + 0xFFFF);
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds §1.5.3 maximum of 65535 bytes")]
+    fn encode_string_above_max_panics() {
+        // Regression test for rust-MQTT-01: previously the 16-bit length
+        // prefix silently wrapped (`(len >> 8) as u8` / `len as u8`),
+        // corrupting the wire packet instead of rejecting the oversized
+        // input. This must now fail loudly rather than emit a malformed
+        // packet whose payload bytes get re-parsed as later fields.
+        let s = "a".repeat(0x10000); // 65536 bytes, one over the limit
+        let mut buf = Vec::new();
+        encode_string(&mut buf, &s);
+    }
+
+    #[test]
+    #[should_panic(expected = "65535-byte maximum")]
+    fn encode_bytes_above_max_panics() {
+        // Regression test for rust-MQTT-01 (binary-data sibling of
+        // encode_string): same silent-truncation bug, same fix.
+        let b = vec![0u8; 0x10000];
+        let mut buf = Vec::new();
+        encode_bytes(&mut buf, &b);
     }
 
     #[test]

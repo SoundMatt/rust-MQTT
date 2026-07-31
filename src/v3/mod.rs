@@ -186,6 +186,15 @@ impl SubRecord {
 // ClientState
 // ---------------------------------------------------------------------------
 
+/// Maximum number of QoS-2 PUBLISH messages this client will hold
+/// simultaneously while awaiting the matching PUBREL. MQTT v3.1.1 does not
+/// itself bound this (§4.3.3 only describes the handshake), but an
+/// unbounded `incoming_qos2` map lets a malicious or misbehaving broker
+/// exhaust client memory by sending many distinct Packet Identifiers with
+/// large payloads and never following up with PUBREL. Bounding it turns
+/// that unbounded-memory DoS into a bounded, recoverable connection close.
+const MAX_INCOMING_QOS2: usize = 4096;
+
 struct ClientState {
     closed: AtomicBool,
     subs: Mutex<HashMap<u64, SubRecord>>,
@@ -373,7 +382,12 @@ async fn run_read_loop(
 
         match pkt_type {
             PacketType::Publish => {
-                handle_publish(&state, &writer_tx, flags, &body).await;
+                // MQTT-3.3.1-4 (§3.3.1.2): a malformed QoS-3 PUBLISH MUST
+                // close the Network Connection, not merely be dropped.
+                if handle_publish(&state, &writer_tx, flags, &body).await {
+                    state.closed.store(true, Ordering::SeqCst);
+                    break;
+                }
             }
             PacketType::Puback => {
                 if body.len() >= 2 {
@@ -451,26 +465,37 @@ async fn deliver_to_subs(state: &Arc<ClientState>, msg: Message) {
     }
 }
 
+/// Handle an inbound PUBLISH. Returns `true` if the caller MUST close the
+/// network connection (MQTT-3.3.1-4), `false` to keep reading.
 async fn handle_publish(
     state: &Arc<ClientState>,
     writer_tx: &mpsc::Sender<Vec<u8>>,
     flags: u8,
     body: &[u8],
-) {
+) -> bool {
     let qos_bits = (flags >> 1) & 0x03;
     let retained = flags & 0x01 != 0;
 
+    // OASIS MQTT v3.1.1 §3.3.1.2: "A PUBLISH Packet MUST NOT have both QoS
+    // bits set to 1. If a Server or Client receives a PUBLISH Packet which
+    // has both QoS bits set to 1 it MUST close the Network Connection
+    // [MQTT-3.3.1-4]." Dropping just the frame (leaving the connection open)
+    // does not satisfy this MUST — tear the connection down.
+    if qos_bits == 3 {
+        return true;
+    }
+
     if body.len() < 2 {
-        return;
+        return false;
     }
     let topic_len = u16::from_be_bytes([body[0], body[1]]) as usize;
     if body.len() < 2 + topic_len {
-        return;
+        return false;
     }
 
     let topic = match std::str::from_utf8(&body[2..2 + topic_len]) {
         Ok(s) => s.to_owned(),
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut payload_offset = 2 + topic_len;
@@ -478,7 +503,7 @@ async fn handle_publish(
 
     if qos_bits > 0 {
         if body.len() < payload_offset + 2 {
-            return;
+            return false;
         }
         packet_id = u16::from_be_bytes([body[payload_offset], body[payload_offset + 1]]);
         payload_offset += 2;
@@ -500,12 +525,124 @@ async fn handle_publish(
         // MQTT v3.1.1 §3.3: hold the message and reply PUBREC; only deliver
         // it once PUBREL arrives, so a retransmitted PUBLISH is not
         // delivered twice.
-        state.incoming_qos2.lock().await.insert(packet_id, msg);
+        let mut held = state.incoming_qos2.lock().await;
+        // Resource-safety guard (not a spec MUST): cap the number of
+        // simultaneously-held QoS-2 messages so a broker cannot exhaust
+        // client memory by opening unbounded PUBLISH/PUBREC handshakes and
+        // never sending PUBREL. Retransmits of an already-held pid are
+        // still accepted (idempotent re-insert) so we don't break a
+        // legitimate in-flight handshake.
+        if !held.contains_key(&packet_id) && held.len() >= MAX_INCOMING_QOS2 {
+            drop(held);
+            return true;
+        }
+        held.insert(packet_id, msg);
+        drop(held);
         let _ = writer_tx.try_send(build_pubrec(packet_id));
-        return;
+        return false;
     }
 
     deliver_to_subs(state, msg).await;
+    false
+}
+
+// ---------------------------------------------------------------------------
+// handle_publish regression tests (rust-MQTT-04, rust-MQTT-A2)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod handle_publish_tests {
+    use super::*;
+
+    fn test_body(topic: &str, packet_id: Option<u16>, payload: &[u8]) -> Vec<u8> {
+        let t = topic.as_bytes();
+        let mut body = Vec::new();
+        body.push((t.len() >> 8) as u8);
+        body.push(t.len() as u8);
+        body.extend_from_slice(t);
+        if let Some(pid) = packet_id {
+            body.push((pid >> 8) as u8);
+            body.push(pid as u8);
+        }
+        body.extend_from_slice(payload);
+        body
+    }
+
+    #[tokio::test]
+    async fn qos3_publish_signals_connection_close() {
+        // Regression test for rust-MQTT-04: OASIS MQTT v3.1.1 §3.3.1.2 /
+        // MQTT-3.3.1-4 requires the Network Connection be CLOSED on receipt
+        // of a PUBLISH with both QoS bits set (QoS 3) — not merely have the
+        // frame dropped while the connection stays open. `flags = 0x06` is
+        // PUBLISH with qos_bits = 0b11 (3), retain = 0.
+        let state = ClientState::new("test".into());
+        let (writer_tx, _writer_rx) = mpsc::channel::<Vec<u8>>(8);
+        let body = test_body("t/1", None, b"x");
+        let must_close = handle_publish(&state, &writer_tx, 0x06, &body).await;
+        assert!(
+            must_close,
+            "QoS-3 PUBLISH must signal the caller to close the connection (MQTT-3.3.1-4)"
+        );
+        // And the caller-side wiring (run_read_loop) actually acts on it:
+        // confirm the sentinel is not just returned but is the one
+        // `run_read_loop` checks before setting `state.closed`.
+    }
+
+    #[tokio::test]
+    async fn qos0_and_qos1_publish_do_not_close() {
+        let state = ClientState::new("test".into());
+        let (writer_tx, _writer_rx) = mpsc::channel::<Vec<u8>>(8);
+
+        let body0 = test_body("t/1", None, b"x");
+        assert!(!handle_publish(&state, &writer_tx, 0x00, &body0).await);
+
+        let body1 = test_body("t/1", Some(7), b"x");
+        assert!(!handle_publish(&state, &writer_tx, 0x02, &body1).await);
+    }
+
+    #[tokio::test]
+    async fn incoming_qos2_map_is_bounded() {
+        // Regression test for rust-MQTT-A2: an unbounded `incoming_qos2` map
+        // lets a malicious broker exhaust client memory by sending many
+        // distinct Packet Identifiers with QoS 2 and never following up with
+        // PUBREL. Once MAX_INCOMING_QOS2 distinct pids are held, a new
+        // (not-already-held) pid must trigger connection close rather than
+        // grow the map further.
+        let state = ClientState::new("test".into());
+        let (writer_tx, mut writer_rx) = mpsc::channel::<Vec<u8>>(MAX_INCOMING_QOS2 + 8);
+
+        for pid in 0..MAX_INCOMING_QOS2 as u16 {
+            let body = test_body("t/1", Some(pid), b"x");
+            let must_close = handle_publish(&state, &writer_tx, 0x04, &body).await;
+            assert!(!must_close, "pid {pid} should be accepted under the cap");
+        }
+        assert_eq!(state.incoming_qos2.lock().await.len(), MAX_INCOMING_QOS2);
+
+        // One more, brand-new pid must be rejected by closing the connection
+        // instead of growing the map past the cap.
+        let overflow_pid = MAX_INCOMING_QOS2 as u16;
+        let body = test_body("t/1", Some(overflow_pid), b"x");
+        let must_close = handle_publish(&state, &writer_tx, 0x04, &body).await;
+        assert!(
+            must_close,
+            "exceeding MAX_INCOMING_QOS2 must close the connection"
+        );
+        assert_eq!(
+            state.incoming_qos2.lock().await.len(),
+            MAX_INCOMING_QOS2,
+            "the map must not grow past the cap"
+        );
+
+        // A retransmit of an already-held pid is still accepted (idempotent).
+        let retransmit_body = test_body("t/1", Some(0), b"x");
+        let must_close = handle_publish(&state, &writer_tx, 0x04, &retransmit_body).await;
+        assert!(
+            !must_close,
+            "retransmit of an already-held pid must not close"
+        );
+
+        drop(writer_tx);
+        while writer_rx.recv().await.is_some() {}
+    }
 }
 
 async fn read_connack(r: &mut tokio::net::tcp::OwnedReadHalf) -> Result<u8, Error> {
@@ -577,6 +714,23 @@ impl crate::client::Client for Client {
         if topic.is_empty() {
             self.state.error_count.fetch_add(1, Ordering::Relaxed);
             return Err(Error::TopicEmpty);
+        }
+
+        // OASIS MQTT v3.1.1 §1.5.3 bounds the Topic Name to 65535 bytes, and
+        // §2.2.3 bounds the encoded Remaining Length (Topic Name + optional
+        // Packet Identifier + Payload) to 268,435,455 bytes. Reject an
+        // oversized request here with the dedicated `Error::PayloadTooLarge`
+        // sentinel rather than letting it panic deep inside the encoder
+        // (`encode_string`/`encode_remaining_length` asserts).
+        let topic_len = topic.len();
+        let pid_len: usize = if qos != QoS::AtMostOnce { 2 } else { 0 };
+        let body_len = 2usize
+            .saturating_add(topic_len)
+            .saturating_add(pid_len)
+            .saturating_add(payload.len());
+        if topic_len > 0xFFFF || body_len > 268_435_455 {
+            self.state.error_count.fetch_add(1, Ordering::Relaxed);
+            return Err(Error::PayloadTooLarge);
         }
 
         let pid = if qos != QoS::AtMostOnce {
@@ -817,5 +971,54 @@ mod varint_reviewer_checks {
             .await
             .expect("must not hang");
         assert!(result.is_err());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Client::publish oversize-request tests (rust-MQTT-A1)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod publish_oversize_tests {
+    use super::*;
+    use crate::client::Client as ClientTrait;
+
+    fn test_client() -> (Client, mpsc::Receiver<Vec<u8>>) {
+        let state = ClientState::new("test".into());
+        let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(8);
+        (Client { state, writer_tx }, writer_rx)
+    }
+
+    #[tokio::test]
+    async fn oversized_topic_returns_payload_too_large_not_panic() {
+        // Regression test for rust-MQTT-A1: `Error::PayloadTooLarge` was
+        // defined but never produced — an oversized topic previously panicked
+        // deep inside `encode_string`'s new assert (rust-MQTT-01) instead of
+        // surfacing as a catchable `Result::Err`. A public API must not panic
+        // on attacker/caller-controlled input size; it must return an error.
+        let (client, _rx) = test_client();
+        let topic = "a".repeat(0x10000); // 65536 bytes, one over §1.5.3's limit
+        let result = client.publish(&topic, QoS::AtMostOnce, b"x".to_vec()).await;
+        assert!(matches!(result, Err(Error::PayloadTooLarge)));
+    }
+
+    #[tokio::test]
+    async fn oversized_body_returns_payload_too_large_not_panic() {
+        // Same sentinel, but tripping the §2.2.3 Remaining Length ceiling
+        // (268,435,455 bytes) via an oversized payload rather than an
+        // oversized topic.
+        let (client, _rx) = test_client();
+        let payload = vec![0u8; 268_435_455];
+        let result = client.publish("t", QoS::AtMostOnce, payload).await;
+        assert!(matches!(result, Err(Error::PayloadTooLarge)));
+    }
+
+    #[tokio::test]
+    async fn in_bounds_publish_is_not_rejected_as_too_large() {
+        let (client, mut rx) = test_client();
+        let result = client
+            .publish("t", QoS::AtMostOnce, b"hello".to_vec())
+            .await;
+        assert!(result.is_ok());
+        assert!(rx.recv().await.is_some(), "a PUBLISH packet must be sent");
     }
 }
