@@ -183,13 +183,13 @@ jobs:
       - name: Install mosquitto-clients (mosquitto_pub/mosquitto_sub — the independent third-party validator)
         run: sudo apt-get update && sudo apt-get install -y mosquitto-clients
 
-      # Probe-then-skip-cleanly posture (mirrors rust-DDS's `cyclone-interop`
-      # CI job): the `services:` container starts alongside the job but
-      # without a declared health check there is no guarantee its listener
-      # is accepting connections yet by the time this step runs, and a
-      # broker that never becomes reachable for any other reason should
-      # leave this job green (not red) rather than blocking ordinary CI on
-      # an environment dependency — see tests/mqtt_interop.rs's module doc
+      # Was probe-then-skip-cleanly (the `services:` container starts
+      # alongside the job with no declared health check, so briefly waiting
+      # out its listener is still legitimate). Hardened to hard-fail on
+      # this canonical ubuntu-latest runner (SoundMatt/RELAY THEME-K #125,
+      # INTEROP-05): the broker has been confirmed reachable on 6/6 recent
+      # runs of this exact job, so a real broker regression should now be
+      # red, not silently green — see tests/mqtt_interop.rs's module doc
       # comment for the same posture at the individual-test level.
       - name: Probe live Mosquitto broker availability
         id: probe
@@ -202,10 +202,10 @@ jobs:
             sleep 1
           done
           echo "available=false" >> "$GITHUB_OUTPUT"
-          echo "::notice::Mosquitto broker not reachable on localhost:1883 after 30s — skipping live-broker interop tests"
+          echo "::error::Mosquitto broker not reachable on localhost:1883 after 30s on the canonical ubuntu-latest runner — this broker has been reliably reachable on every recent run, so treating this as a genuine regression rather than an environment gap"
+          exit 1
 
       - name: Live MQTT interop (real-broker round-trip + mosquitto_pub/mosquitto_sub third-party-peer interop)
-        if: steps.probe.outputs.available == 'true'
         run: cargo test --release --features mqtt-interop --test mqtt_interop -- --ignored --test-threads=1
         env:
           MQTT_INTEROP_BROKER: "127.0.0.1:1883"
